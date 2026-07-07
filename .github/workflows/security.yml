@@ -1,0 +1,17 @@
+name: Security Review
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  security:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Security review gate
+        run: Scripts/security-review.sh
+      - name: Dependency audit
+        run: swift package show-dependencies --format json > dependencies.json
+
