@@ -18,6 +18,23 @@ struct CredentialRedactorTests {
         #expect(CredentialRedactor.redact(value) == "AZCOPY_SPA_CLIENT_SECRET=<redacted> azcopy copy")
     }
 
+    @Test("redacts SAS flag assignments")
+    func redactsSASFlagAssignments() {
+        let value = "azcopy jobs resume job --source-sas=sv=1&sig=source --destination-sas=sv=1&sig=destination"
+        let redacted = CredentialRedactor.redact(value)
+
+        #expect(redacted.contains("--source-sas=<redacted>"))
+        #expect(redacted.contains("--destination-sas=<redacted>"))
+        #expect(!redacted.contains("sig=source"))
+        #expect(!redacted.contains("sig=destination"))
+    }
+
+    @Test("preserves non-URL log text")
+    func preservesNonURLLogText() {
+        let value = "INFO: Name: AZCOPY_LOG_LOCATION\nCurrent Value: \nDescription: Overrides where log files are stored."
+        #expect(CredentialRedactor.redact(value) == value)
+    }
+
     @Test("redacts secret environment values in logs")
     func redactsForLog() {
         let log = CredentialRedactor.redactForLog(

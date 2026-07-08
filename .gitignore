@@ -7,7 +7,7 @@ xcuserdata/
 *.xcodeproj/xcuserdata/
 coverage/
 release/
+TestReports/
 *.xcarchive
 *.dmg
 *.zip
-

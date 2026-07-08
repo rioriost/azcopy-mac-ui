@@ -8,15 +8,10 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .library(name: "AzCopyMacUICore", targets: ["AzCopyMacUICore"]),
-        .executable(name: "AzCopyMacUI", targets: ["AzCopyMacUI"])
+        .library(name: "AzCopyMacUICore", targets: ["AzCopyMacUICore"])
     ],
     targets: [
         .target(name: "AzCopyMacUICore"),
-        .executableTarget(
-            name: "AzCopyMacUI",
-            dependencies: ["AzCopyMacUICore"]
-        ),
         .testTarget(
             name: "AzCopyMacUICoreTests",
             dependencies: ["AzCopyMacUICore"]

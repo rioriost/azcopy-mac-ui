@@ -5,7 +5,15 @@ public enum TransferAction: String, CaseIterable, Sendable {
     case sync
     case list
     case remove
+    case bench
+    case make
+    case setProperties
+    case env
     case jobsList
+    case jobsShow
+    case jobsResume
+    case jobsRemove
+    case jobsClean
     case loginStatus
     case logout
 }
@@ -20,6 +28,27 @@ public struct TransferRequest: Equatable, Sendable {
     public var deleteDestination: Bool?
     public var extraFlags: [String]
     public var authentication: AuthenticationMethod
+    public var jobID: String
+    public var jobTransferStatus: String
+    public var sourceSAS: String
+    public var destinationSAS: String
+    public var benchMode: String
+    public var benchFileCount: String
+    public var benchSizePerFile: String
+    public var benchNumberOfFolders: String
+    public var benchDeleteTestData: Bool
+    public var benchPutMD5: Bool
+    public var benchCheckLength: Bool
+    public var makeQuotaGB: String
+    public var blockBlobTier: String
+    public var pageBlobTier: String
+    public var rehydratePriority: String
+    public var metadata: String
+    public var blobTags: String
+    public var includePath: String
+    public var excludePath: String
+    public var listOfFiles: String
+    public var showSensitiveEnvironment: Bool
 
     public init(
         action: TransferAction,
@@ -30,7 +59,28 @@ public struct TransferRequest: Equatable, Sendable {
         overwrite: Bool? = nil,
         deleteDestination: Bool? = nil,
         extraFlags: [String] = [],
-        authentication: AuthenticationMethod = .userIdentity(tenantID: nil)
+        authentication: AuthenticationMethod = .userIdentity(tenantID: nil),
+        jobID: String = "",
+        jobTransferStatus: String = "",
+        sourceSAS: String = "",
+        destinationSAS: String = "",
+        benchMode: String = "upload",
+        benchFileCount: String = "",
+        benchSizePerFile: String = "",
+        benchNumberOfFolders: String = "",
+        benchDeleteTestData: Bool = true,
+        benchPutMD5: Bool = false,
+        benchCheckLength: Bool = true,
+        makeQuotaGB: String = "",
+        blockBlobTier: String = "None",
+        pageBlobTier: String = "None",
+        rehydratePriority: String = "Standard",
+        metadata: String = "",
+        blobTags: String = "",
+        includePath: String = "",
+        excludePath: String = "",
+        listOfFiles: String = "",
+        showSensitiveEnvironment: Bool = false
     ) {
         self.action = action
         self.source = source
@@ -41,6 +91,27 @@ public struct TransferRequest: Equatable, Sendable {
         self.deleteDestination = deleteDestination
         self.extraFlags = extraFlags
         self.authentication = authentication
+        self.jobID = jobID
+        self.jobTransferStatus = jobTransferStatus
+        self.sourceSAS = sourceSAS
+        self.destinationSAS = destinationSAS
+        self.benchMode = benchMode
+        self.benchFileCount = benchFileCount
+        self.benchSizePerFile = benchSizePerFile
+        self.benchNumberOfFolders = benchNumberOfFolders
+        self.benchDeleteTestData = benchDeleteTestData
+        self.benchPutMD5 = benchPutMD5
+        self.benchCheckLength = benchCheckLength
+        self.makeQuotaGB = makeQuotaGB
+        self.blockBlobTier = blockBlobTier
+        self.pageBlobTier = pageBlobTier
+        self.rehydratePriority = rehydratePriority
+        self.metadata = metadata
+        self.blobTags = blobTags
+        self.includePath = includePath
+        self.excludePath = excludePath
+        self.listOfFiles = listOfFiles
+        self.showSensitiveEnvironment = showSensitiveEnvironment
     }
 }
 
@@ -101,18 +172,70 @@ public struct AzCopyCommandBuilder: Sendable {
         case .remove:
             guard !request.source.isEmpty else { throw BuilderError.missingSource }
             arguments = ["remove", request.source]
+        case .bench:
+            guard !request.source.isEmpty else { throw BuilderError.missingSource }
+            arguments = ["bench", request.source]
+            appendFlag("--mode", value: request.benchMode, to: &arguments)
+            appendFlag("--file-count", value: request.benchFileCount, to: &arguments)
+            appendFlag("--size-per-file", value: request.benchSizePerFile, to: &arguments)
+            appendFlag("--number-of-folders", value: request.benchNumberOfFolders, to: &arguments)
+            if !request.benchDeleteTestData {
+                arguments.append("--delete-test-data=false")
+            }
+            if request.benchPutMD5 {
+                arguments.append("--put-md5")
+            }
+            if !request.benchCheckLength {
+                arguments.append("--check-length=false")
+            }
+        case .make:
+            guard !request.source.isEmpty else { throw BuilderError.missingSource }
+            arguments = ["make", request.source]
+            appendFlag("--quota-gb", value: request.makeQuotaGB, to: &arguments)
+        case .setProperties:
+            guard !request.source.isEmpty else { throw BuilderError.missingSource }
+            arguments = ["set-properties", request.source]
+            appendFlag("--block-blob-tier", value: request.blockBlobTier, defaultValue: "None", to: &arguments)
+            appendFlag("--page-blob-tier", value: request.pageBlobTier, defaultValue: "None", to: &arguments)
+            appendFlag("--rehydrate-priority", value: request.rehydratePriority, defaultValue: "Standard", to: &arguments)
+            appendFlag("--metadata", value: request.metadata, to: &arguments)
+            appendFlag("--blob-tags", value: request.blobTags, to: &arguments)
+            appendFlag("--include-path", value: request.includePath, to: &arguments)
+            appendFlag("--exclude-path", value: request.excludePath, to: &arguments)
+            appendFlag("--list-of-files", value: request.listOfFiles, to: &arguments)
+        case .env:
+            arguments = ["env"]
+            if request.showSensitiveEnvironment {
+                arguments.append("--show-sensitive")
+            }
         case .jobsList:
             arguments = ["jobs", "list"]
+        case .jobsShow:
+            guard !request.jobID.isEmpty else { throw BuilderError.missingSource }
+            arguments = ["jobs", "show", request.jobID]
+            appendFlag("--with-status", value: request.jobTransferStatus, to: &arguments)
+        case .jobsResume:
+            guard !request.jobID.isEmpty else { throw BuilderError.missingSource }
+            arguments = ["jobs", "resume", request.jobID]
+            appendFlag("--source-sas", value: request.sourceSAS, to: &arguments)
+            appendFlag("--destination-sas", value: request.destinationSAS, to: &arguments)
+            appendFlag("--include", value: request.includePath, to: &arguments)
+            appendFlag("--exclude", value: request.excludePath, to: &arguments)
+        case .jobsRemove:
+            guard !request.jobID.isEmpty else { throw BuilderError.missingSource }
+            arguments = ["jobs", "remove", request.jobID]
+        case .jobsClean:
+            arguments = ["jobs", "clean"]
         case .loginStatus:
             arguments = ["login", "status"]
         case .logout:
             arguments = ["logout"]
         }
 
-        if request.recursive {
+        if request.recursive, supportsRecursive(request.action) {
             arguments.append("--recursive=true")
         }
-        if request.dryRun {
+        if request.dryRun, supportsDryRun(request.action) {
             arguments.append("--dry-run")
         }
         if let overwrite = request.overwrite {
@@ -143,5 +266,28 @@ public struct AzCopyCommandBuilder: Sendable {
             throw BuilderError.missingDestination
         }
     }
-}
 
+    private func appendFlag(_ name: String, value: String, defaultValue: String = "", to arguments: inout [String]) {
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedValue.isEmpty, trimmedValue != defaultValue else { return }
+        arguments.append("\(name)=\(trimmedValue)")
+    }
+
+    private func supportsRecursive(_ action: TransferAction) -> Bool {
+        switch action {
+        case .copy, .sync, .remove, .setProperties:
+            true
+        default:
+            false
+        }
+    }
+
+    private func supportsDryRun(_ action: TransferAction) -> Bool {
+        switch action {
+        case .copy, .sync, .remove, .setProperties:
+            true
+        default:
+            false
+        }
+    }
+}

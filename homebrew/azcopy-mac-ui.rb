@@ -1,11 +1,11 @@
 cask "azcopy-mac-ui" do
   version "0.1.0"
-  sha256 "REPLACE_WITH_RELEASE_SHA256"
+  sha256 "904e264bb554f9b985f08e838a607a59e435e78851386459462e0ad84c288e40"
 
-  url "https://github.com/OWNER/azcopy-mac-ui/releases/download/v#{version}/azcopy-mac-ui-#{version}-macos-arm64.notarized.zip"
+  url "https://github.com/rioriost/azcopy-mac-ui/releases/download/v#{version}/azcopy-mac-ui-#{version}-macos-arm64.zip"
   name "AzCopy Mac UI"
   desc "Native macOS GUI for Azure AzCopy"
-  homepage "https://github.com/OWNER/azcopy-mac-ui"
+  homepage "https://github.com/rioriost/azcopy-mac-ui"
   license "MIT"
 
   depends_on arch: :arm64
@@ -20,4 +20,3 @@ cask "azcopy-mac-ui" do
     "~/Library/Logs/AzCopy Mac UI"
   ]
 end
-

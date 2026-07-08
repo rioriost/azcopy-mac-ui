@@ -11,10 +11,18 @@ public enum CredentialRedactor {
         "AZCOPY_ACCOUNT_KEY"
     ]
 
+    private static let sensitiveFlagNames: Set<String> = [
+        "--source-sas",
+        "--destination-sas"
+    ]
+
     public static func redact(_ value: String) -> String {
         var redacted = redactQuerySecrets(in: value)
         for key in sensitiveEnvironmentKeys {
             redacted = redactAssignment(named: key, in: redacted)
+        }
+        for flag in sensitiveFlagNames {
+            redacted = redactAssignment(named: flag, in: redacted)
         }
         return redacted
     }
@@ -40,16 +48,34 @@ public enum CredentialRedactor {
     }
 
     private static func redactQuerySecrets(in value: String) -> String {
-        guard var components = URLComponents(string: value), let items = components.queryItems else {
+        let pattern = #"https?://[^\s"']+"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
             return value
         }
-        components.queryItems = items.map { item in
-            if sensitiveQueryKeys.contains(item.name.lowercased()) {
-                return URLQueryItem(name: item.name, value: "<redacted>")
+
+        var redacted = value
+        let matches = regex.matches(in: value, range: NSRange(value.startIndex..., in: value))
+        for match in matches.reversed() {
+            guard let range = Range(match.range, in: value) else { continue }
+            let urlText = String(value[range])
+            guard var components = URLComponents(string: urlText), let items = components.queryItems else {
+                continue
             }
-            return item
+
+            components.queryItems = items.map { item in
+                if sensitiveQueryKeys.contains(item.name.lowercased()) {
+                    return URLQueryItem(name: item.name, value: "<redacted>")
+                }
+                return item
+            }
+
+            guard let redactedURLText = components.string,
+                  let replacementRange = Range(match.range, in: redacted) else {
+                continue
+            }
+            redacted.replaceSubrange(replacementRange, with: redactedURLText)
         }
-        return components.string ?? value
+        return redacted
     }
 
     private static func redactAssignment(named key: String, in value: String) -> String {
@@ -60,4 +86,3 @@ public enum CredentialRedactor {
         )
     }
 }
-
