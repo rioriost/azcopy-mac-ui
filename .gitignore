@@ -8,6 +8,7 @@ xcuserdata/
 coverage/
 release/
 TestReports/
+images/icon-candidates/
 *.xcarchive
 *.dmg
 *.zip

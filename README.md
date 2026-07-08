@@ -6,7 +6,7 @@ Native macOS GUI for [AzCopy](https://github.com/Azure/azure-storage-azcopy), wr
 
 ## Status
 
-Initial version: `0.1.0`.
+Current version: `0.1.1`.
 
 This app does not bundle AzCopy. Install AzCopy with Homebrew:
 

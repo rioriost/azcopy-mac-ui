@@ -20,6 +20,7 @@
 		01000000000000000000000B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000000B /* Assets.xcassets */; };
 		01000000000000000000000C /* AzCopyMacUICore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 02000000000000000000000C /* AzCopyMacUICore.framework */; };
 		01000000000000000000000D /* AzCopyMacUICore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 02000000000000000000000C /* AzCopyMacUICore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		01000000000000000000000E /* AzCopyMacUIIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000010 /* AzCopyMacUIIcon.icns */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -62,6 +63,7 @@
 		02000000000000000000000D /* AzCopy Mac UI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AzCopy Mac UI.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		02000000000000000000000E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = AzCopyMacUI/Info.plist; sourceTree = SOURCE_ROOT; };
 		02000000000000000000000F /* AzCopyMacUI.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AzCopyMacUI/AzCopyMacUI.entitlements; sourceTree = SOURCE_ROOT; };
+		020000000000000000000010 /* AzCopyMacUIIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AzCopyMacUI/Resources/AzCopyMacUIIcon.icns; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -129,6 +131,7 @@
 			isa = PBXGroup;
 			children = (
 				02000000000000000000000B /* Assets.xcassets */,
+				020000000000000000000010 /* AzCopyMacUIIcon.icns */,
 				02000000000000000000000E /* Info.plist */,
 				02000000000000000000000F /* AzCopyMacUI.entitlements */,
 			);
@@ -226,6 +229,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				01000000000000000000000B /* Assets.xcassets in Resources */,
+				01000000000000000000000E /* AzCopyMacUIIcon.icns in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -386,7 +390,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.github.azcopy-mac-ui";
 				PRODUCT_NAME = "AzCopy Mac UI";
 				SWIFT_VERSION = 6.0;
@@ -410,7 +414,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.github.azcopy-mac-ui";
 				PRODUCT_NAME = "AzCopy Mac UI";
 				SWIFT_VERSION = 6.0;
@@ -489,4 +493,3 @@
 	};
 	rootObject = 040000000000000000000001 /* Project object */;
 }
-

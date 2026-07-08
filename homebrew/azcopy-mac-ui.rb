@@ -1,6 +1,6 @@
 cask "azcopy-mac-ui" do
-  version "0.1.0"
-  sha256 "904e264bb554f9b985f08e838a607a59e435e78851386459462e0ad84c288e40"
+  version "0.1.1"
+  sha256 "b241da0196c0719b0bd4c79eb42944376ebe67573a03364406d4570b92356334"
 
   url "https://github.com/rioriost/azcopy-mac-ui/releases/download/v#{version}/azcopy-mac-ui-#{version}-macos-arm64.zip"
   name "AzCopy Mac UI"
