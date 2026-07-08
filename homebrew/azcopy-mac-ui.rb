@@ -6,7 +6,6 @@ cask "azcopy-mac-ui" do
   name "AzCopy Mac UI"
   desc "Native macOS GUI for Azure AzCopy"
   homepage "https://github.com/rioriost/azcopy-mac-ui"
-  license "MIT"
 
   depends_on arch: :arm64
   depends_on macos: ">= :sonoma"
