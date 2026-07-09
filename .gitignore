@@ -12,3 +12,4 @@ images/icon-candidates/
 *.xcarchive
 *.dmg
 *.zip
+.DS_Store
