@@ -13,10 +13,10 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var source: String = "" {
-        didSet { defaults.set(source, forKey: DefaultsKey.source) }
+        didSet { persistEndpoint(source, key: DefaultsKey.source) }
     }
     @Published var destination: String = "" {
-        didSet { defaults.set(destination, forKey: DefaultsKey.destination) }
+        didSet { persistEndpoint(destination, key: DefaultsKey.destination) }
     }
     @Published var recursive: Bool = true {
         didSet { defaults.set(recursive, forKey: DefaultsKey.recursive) }
@@ -40,7 +40,7 @@ final class AppModel: ObservableObject {
         didSet { defaults.set(excludePattern, forKey: DefaultsKey.excludePattern) }
     }
     @Published var extraFlagsText: String = "" {
-        didSet { defaults.set(extraFlagsText, forKey: DefaultsKey.extraFlagsText) }
+        didSet { defaults.removeObject(forKey: DefaultsKey.extraFlagsText) }
     }
     @Published var jobID: String = "" {
         didSet { defaults.set(jobID, forKey: DefaultsKey.jobID) }
@@ -48,12 +48,8 @@ final class AppModel: ObservableObject {
     @Published var jobTransferStatus: String = "" {
         didSet { defaults.set(jobTransferStatus, forKey: DefaultsKey.jobTransferStatus) }
     }
-    @Published var sourceSAS: String = "" {
-        didSet {}
-    }
-    @Published var destinationSAS: String = "" {
-        didSet {}
-    }
+    @Published var sourceSAS: String = ""
+    @Published var destinationSAS: String = ""
     @Published var benchMode: String = "upload" {
         didSet { defaults.set(benchMode, forKey: DefaultsKey.benchMode) }
     }
@@ -117,33 +113,89 @@ final class AppModel: ObservableObject {
     @Published var applicationID: String = "" {
         didSet { defaults.set(applicationID, forKey: DefaultsKey.applicationID) }
     }
-    @Published var servicePrincipalSecret: String = "" {
-        didSet {}
-    }
+    @Published var servicePrincipalSecret: String = ""
     @Published var certificatePath: String = "" {
         didSet { defaults.set(certificatePath, forKey: DefaultsKey.certificatePath) }
     }
-    @Published var certificatePassword: String = "" {
-        didSet {}
-    }
+    @Published var certificatePassword: String = ""
     @Published var managedIdentityID: String = "" {
         didSet { defaults.set(managedIdentityID, forKey: DefaultsKey.managedIdentityID) }
     }
     @Published var commandPreview: String = ""
-    @Published var statusMessage: String = "Ready"
-    @Published var isRunning: Bool = false
-    @Published var logText: String = ""
+    @Published private(set) var validationMessage: String = ""
+    @Published private(set) var executionState: CommandExecutionState = .idle
+    @Published private(set) var activeCommandPreview: String = ""
+    @Published private(set) var logText: String = ""
+    @Published private(set) var settingsNotice: String = ""
+    @Published var pendingCommand: PendingCommand?
     @Published var tenantOptions: [TenantOption] = []
     @Published var tenantLoadMessage: String = ""
+    @Published private(set) var isLoadingTenants = false
 
     private let builder = AzCopyCommandBuilder()
-    private let runner = AzCopyProcessRunner()
+    private let runner: any AzCopyRunning
     private let defaults: UserDefaults
+    private var runningTask: Task<Void, Never>?
+    private var tenantTask: Task<Void, Never>?
+    static let logCharacterLimit = 128 * 1024
 
-    init(defaults: UserDefaults = .standard) {
+    var isRunning: Bool { executionState == .running }
+    var statusMessage: String { executionState.message }
+
+    init(defaults: UserDefaults = .standard, runner: any AzCopyRunning = AzCopyProcessRunner()) {
         self.defaults = defaults
+        self.runner = runner
+        migratePreferences()
         loadPersistedValues()
         refreshPreview()
+    }
+
+    private func migratePreferences() {
+        var removedCredentials = false
+        for key in [DefaultsKey.source, DefaultsKey.destination] {
+            if let value = defaults.string(forKey: key) {
+                let safeValue = Self.persistableEndpoint(value)
+                if safeValue != value {
+                    removedCredentials = true
+                    defaults.set(safeValue, forKey: key)
+                }
+            }
+        }
+        if let flags = defaults.string(forKey: DefaultsKey.extraFlagsText), !flags.isEmpty {
+            removedCredentials = true
+        }
+        defaults.removeObject(forKey: DefaultsKey.extraFlagsText)
+        for key in ["sourceSAS", "destinationSAS", "servicePrincipalSecret", "certificatePassword"] {
+            if defaults.object(forKey: key) != nil {
+                removedCredentials = true
+                defaults.removeObject(forKey: key)
+            }
+        }
+        if removedCredentials {
+            settingsNotice = "Saved URL credentials and additional flags were removed. Re-enter credentials before running."
+        }
+        if defaults.string(forKey: DefaultsKey.selectedAuthentication) == AuthenticationOption.managedIdentityObjectID.rawValue {
+            settingsNotice += (settingsNotice.isEmpty ? "" : "\n") +
+                "Managed identity object ID is no longer supported. Select a client ID or resource ID; the saved ID has not been converted."
+        }
+    }
+
+    private static func persistableEndpoint(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.contains("://") || trimmed.lowercased().hasPrefix("https:") ||
+                trimmed.lowercased().hasPrefix("http:") else { return value }
+        guard var components = URLComponents(string: trimmed), components.host?.isEmpty == false else {
+            return nil
+        }
+        components.query = nil
+        components.fragment = nil
+        components.user = nil
+        components.password = nil
+        return components.string
+    }
+
+    private func persistEndpoint(_ value: String, key: String) {
+        defaults.set(Self.persistableEndpoint(value), forKey: key)
     }
 
     private func loadPersistedValues() {
@@ -163,7 +215,7 @@ final class AppModel: ObservableObject {
         capMbps = defaults.string(forKey: DefaultsKey.capMbps) ?? ""
         includePattern = defaults.string(forKey: DefaultsKey.includePattern) ?? ""
         excludePattern = defaults.string(forKey: DefaultsKey.excludePattern) ?? ""
-        extraFlagsText = defaults.string(forKey: DefaultsKey.extraFlagsText) ?? ""
+        extraFlagsText = ""
         jobID = defaults.string(forKey: DefaultsKey.jobID) ?? ""
         jobTransferStatus = defaults.string(forKey: DefaultsKey.jobTransferStatus) ?? ""
         sourceSAS = ""
@@ -206,61 +258,116 @@ final class AppModel: ObservableObject {
 
     func refreshPreview() {
         do {
-            let invocation = try builder.build(
-                request: makeTransferRequest(),
-                azCopyURL: URL(fileURLWithPath: effectiveAzCopyPath)
-            )
+            let invocation = try buildInvocation()
             commandPreview = invocation.redactedPreview
-            statusMessage = "Command is ready."
+            validationMessage = ""
         } catch {
             commandPreview = ""
-            statusMessage = error.localizedDescription
+            validationMessage = CredentialRedactor.redact(error.localizedDescription)
         }
     }
 
-    func runSelectedCommand() async {
-        guard !isRunning else { return }
-
-        let invocation: AzCopyInvocation
+    func runSelectedCommand() {
+        guard !isRunning, pendingCommand == nil else { return }
         do {
-            invocation = try builder.build(
-                request: makeTransferRequest(),
+            let request = try makeTransferRequest()
+            let invocation = try buildInvocation(request: request)
+            if Self.requiresConfirmation(request) {
+                pendingCommand = PendingCommand(invocation: invocation)
+            } else {
+                start(invocation)
+            }
+        } catch {
+            executionState = .failed(CredentialRedactor.redact(error.localizedDescription))
+            appendLog("Validation failed: \(error.localizedDescription)")
+        }
+    }
+
+    func confirmPendingCommand(_ command: PendingCommand) {
+        guard !isRunning else { return }
+        pendingCommand = nil
+        start(command.invocation)
+    }
+
+    func signIn() {
+        guard !isRunning, pendingCommand == nil else { return }
+        do {
+            let invocation = try builder.buildLogin(
+                method: authenticationMethod,
                 azCopyURL: URL(fileURLWithPath: effectiveAzCopyPath)
             )
+            try SecurityPolicy().validate(invocation: invocation)
+            start(invocation)
         } catch {
-            statusMessage = error.localizedDescription
-            appendLog("Validation failed: \(error.localizedDescription)")
-            return
+            executionState = .failed(CredentialRedactor.redact(error.localizedDescription))
+            appendLog("Sign in failed: \(error.localizedDescription)")
         }
-
-        isRunning = true
-        statusMessage = "Running..."
-        appendLog("$ \(invocation.redactedPreview)")
-
-        do {
-            let result = try await runner.run(invocation)
-            if !result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                appendLog(result.output)
-            }
-            if !result.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                appendLog(result.errorOutput)
-            }
-            statusMessage = result.exitCode == 0 ? "Command succeeded." : "Command failed with exit code \(result.exitCode)."
-            appendLog(statusMessage)
-        } catch {
-            statusMessage = error.localizedDescription
-            appendLog("Launch failed: \(error.localizedDescription)")
-        }
-
-        isRunning = false
-        refreshPreview()
     }
 
-    private func makeTransferRequest() -> TransferRequest {
-        let actionNeedsDestination = selectedAction == .copy || selectedAction == .sync
-        let overwrite = selectedAction == .copy ? overwriteExisting : nil
-        let deleteDestinationValue = selectedAction == .sync ? deleteDestination : nil
-        let authentication = selectedAuthentication.method(
+    func cancelCommand() {
+        runningTask?.cancel()
+    }
+
+    func cancelTenantLookup() {
+        tenantTask?.cancel()
+    }
+
+    func waitForCommand() async {
+        await runningTask?.value
+    }
+
+    func waitForTenantLookup() async {
+        await tenantTask?.value
+    }
+
+    private func start(_ invocation: AzCopyInvocation) {
+        executionState = .running
+        activeCommandPreview = invocation.redactedPreview
+        appendLog("$ \(invocation.redactedPreview)")
+        runningTask = Task { [weak self, runner] in
+            do {
+                let result = try await runner.run(invocation) { [weak self] event in
+                    await self?.appendOutput(event.text)
+                }
+                try Task.checkCancellation()
+                self?.executionState = result.exitCode == 0
+                    ? .succeeded : .failed("Command failed with exit code \(result.exitCode).")
+            } catch is CancellationError {
+                self?.executionState = .cancelled
+            } catch {
+                self?.executionState = .failed(CredentialRedactor.redact(error.localizedDescription))
+            }
+            if let self {
+                self.appendLog(self.statusMessage)
+                self.runningTask = nil
+            }
+        }
+    }
+
+    private func buildInvocation(request: TransferRequest? = nil) throws -> AzCopyInvocation {
+        let invocation = try builder.build(
+            request: try request ?? makeTransferRequest(),
+            azCopyURL: URL(fileURLWithPath: effectiveAzCopyPath)
+        )
+        try SecurityPolicy().validate(invocation: invocation)
+        return invocation
+    }
+
+    private static func requiresConfirmation(_ request: TransferRequest) -> Bool {
+        switch request.action {
+        case .remove:
+            !request.dryRun
+        case .sync:
+            request.deleteDestination == true && !request.dryRun
+        case .jobsRemove, .jobsClean:
+            true
+        default:
+            false
+        }
+    }
+
+    private var authenticationMethod: AuthenticationMethod {
+        selectedAuthentication.method(
             tenantID: tenantID,
             applicationID: applicationID,
             servicePrincipalSecret: servicePrincipalSecret,
@@ -268,6 +375,12 @@ final class AppModel: ObservableObject {
             certificatePassword: certificatePassword,
             managedIdentityID: managedIdentityID
         )
+    }
+
+    private func makeTransferRequest() throws -> TransferRequest {
+        let actionNeedsDestination = selectedAction == .copy || selectedAction == .sync
+        let overwrite = selectedAction == .copy ? overwriteExisting : nil
+        let deleteDestinationValue = selectedAction == .sync ? deleteDestination : nil
         return TransferRequest(
             action: selectedAction,
             source: source,
@@ -276,8 +389,8 @@ final class AppModel: ObservableObject {
             dryRun: dryRun,
             overwrite: overwrite,
             deleteDestination: deleteDestinationValue,
-            extraFlags: extraFlags(),
-            authentication: authentication,
+            extraFlags: try ExtraFlagsParser.parse(extraFlagsText),
+            authentication: authenticationMethod,
             jobID: jobID,
             jobTransferStatus: jobTransferStatus,
             sourceSAS: sourceSAS,
@@ -298,17 +411,28 @@ final class AppModel: ObservableObject {
             includePath: includePath,
             excludePath: excludePath,
             listOfFiles: listOfFiles,
-            showSensitiveEnvironment: showSensitiveEnvironment
+            showSensitiveEnvironment: showSensitiveEnvironment,
+            capMbps: capMbps,
+            includePattern: includePattern,
+            excludePattern: excludePattern
         )
     }
 
     private func appendLog(_ text: String) {
         let trimmedText = text.trimmingCharacters(in: .newlines)
         guard !trimmedText.isEmpty else { return }
-        if !logText.isEmpty {
+        if !logText.isEmpty, !logText.hasSuffix("\n") {
             logText += "\n"
         }
-        logText += trimmedText
+        appendOutput(CredentialRedactor.redact(trimmedText) + "\n")
+    }
+
+    private func appendOutput(_ text: String) {
+        logText += text.replacingOccurrences(of: "\r", with: "\n")
+        if logText.count > Self.logCharacterLimit {
+            let marker = "[Earlier output truncated]\n"
+            logText = marker + logText.suffix(Self.logCharacterLimit - marker.count)
+        }
     }
 
     private var effectiveAzCopyPath: String {
@@ -317,70 +441,34 @@ final class AppModel: ObservableObject {
     }
 
     func loadTenants() {
+        guard !isLoadingTenants else { return }
+        isLoadingTenants = true
         tenantLoadMessage = "Loading tenants..."
-        Task {
+        tenantTask = Task {
+            defer {
+                isLoadingTenants = false
+                tenantTask = nil
+            }
             do {
-                let tenants = try await Self.fetchTenants()
+                let tenants = try await Self.fetchTenants(runner: runner)
                 tenantOptions = tenants
                 tenantLoadMessage = tenants.isEmpty ? "No tenants returned by Azure CLI." : ""
                 if tenantID.isEmpty, let firstTenant = tenants.first {
                     tenantID = firstTenant.id
                     refreshPreview()
                 }
+            } catch is CancellationError {
+                tenantLoadMessage = "Tenant lookup cancelled."
             } catch {
-                tenantLoadMessage = error.localizedDescription
+                tenantLoadMessage = CredentialRedactor.redact(error.localizedDescription)
             }
         }
     }
 
-    private func extraFlags() -> [String] {
-        var flags: [String] = []
-        let trimmedCapMbps = capMbps.trimmingCharacters(in: .whitespacesAndNewlines)
-        if supportsCapMbps, !trimmedCapMbps.isEmpty {
-            flags.append("--cap-mbps=\(trimmedCapMbps)")
-        }
-
-        if supportsPatternFlags {
-            let trimmedIncludePattern = includePattern.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedIncludePattern.isEmpty {
-                flags.append("--include-pattern=\(trimmedIncludePattern)")
-            }
-
-            let trimmedExcludePattern = excludePattern.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedExcludePattern.isEmpty {
-                flags.append("--exclude-pattern=\(trimmedExcludePattern)")
-            }
-        }
-
-        flags.append(contentsOf: extraFlagsText
-            .split(whereSeparator: \.isWhitespace)
-            .map(String.init))
-        return flags
-    }
-
-    private var supportsPatternFlags: Bool {
-        switch selectedAction {
-        case .copy, .sync, .remove, .setProperties:
-            true
-        default:
-            false
-        }
-    }
-
-    private var supportsCapMbps: Bool {
-        switch selectedAction {
-        case .copy, .sync, .bench:
-            true
-        default:
-            false
-        }
-    }
-
-    private nonisolated static func fetchTenants() async throws -> [TenantOption] {
-        try await Task.detached(priority: .userInitiated) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/az")
-            process.arguments = [
+    private nonisolated static func fetchTenants(runner: any AzCopyRunning) async throws -> [TenantOption] {
+        let invocation = AzCopyInvocation(
+            executableURL: URL(fileURLWithPath: "/opt/homebrew/bin/az"),
+            arguments: [
                 "account",
                 "tenant",
                 "list",
@@ -388,34 +476,47 @@ final class AppModel: ObservableObject {
                 "[].{tenantId:tenantId,displayName:displayName}",
                 "-o",
                 "tsv"
-            ]
-
-            let output = Pipe()
-            let errorOutput = Pipe()
-            process.standardOutput = output
-            process.standardError = errorOutput
-            try process.run()
-            process.waitUntilExit()
-
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            let errorData = errorOutput.fileHandleForReading.readDataToEndOfFile()
-            guard process.terminationStatus == 0 else {
-                let message = String(data: errorData, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                throw TenantLoadError.azureCLI(message?.isEmpty == false ? message! : "Azure CLI tenant lookup failed.")
+            ])
+        let result = try await runner.run(invocation) { _ in }
+        guard result.exitCode == 0 else {
+            let message = result.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw TenantLoadError.azureCLI(message.isEmpty ? "Azure CLI tenant lookup failed." : message)
+        }
+        guard !result.outputTruncated else {
+            throw TenantLoadError.azureCLI("Azure CLI tenant output was truncated. Narrow the tenant lookup before retrying.")
+        }
+        return try result.output.split(separator: "\n").map { line in
+            let columns = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard columns.count == 2, !columns[0].isEmpty else {
+                throw TenantLoadError.azureCLI("Azure CLI returned an invalid tenant list.")
             }
-
-            let text = String(data: data, encoding: .utf8) ?? ""
-            return text
-                .split(separator: "\n")
-                .compactMap { line -> TenantOption? in
-                    let columns = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-                    guard let tenantID = columns.first, !tenantID.isEmpty else { return nil }
-                    let name = columns.dropFirst().first?.nilIfPlaceholder
-                    return TenantOption(id: tenantID, displayName: name)
-                }
-        }.value
+            return TenantOption(id: columns[0], displayName: columns[1].nilIfPlaceholder)
+        }
     }
+}
+
+enum CommandExecutionState: Equatable {
+    case idle
+    case running
+    case succeeded
+    case failed(String)
+    case cancelled
+
+    var message: String {
+        switch self {
+        case .idle: "Ready"
+        case .running: "Running..."
+        case .succeeded: "Command succeeded."
+        case .failed(let message): message
+        case .cancelled: "Command cancelled."
+        }
+    }
+}
+
+struct PendingCommand: Identifiable {
+    let id = UUID()
+    let invocation: AzCopyInvocation
+    var preview: String { invocation.redactedPreview }
 }
 
 struct TenantOption: Identifiable, Hashable, Sendable {
@@ -502,6 +603,16 @@ enum AuthenticationOption: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    var supportsSignIn: Bool {
+        switch self {
+        case .userIdentity, .deviceCode, .servicePrincipalSecret, .servicePrincipalCertificate,
+             .managedIdentitySystem, .managedIdentityClientID, .managedIdentityResourceID:
+            true
+        default:
+            false
+        }
+    }
+
     var title: String {
         method(
             tenantID: nil,
@@ -526,7 +637,7 @@ enum AuthenticationOption: String, CaseIterable, Identifiable {
         case .userIdentity:
             return .userIdentity(tenantID: normalizedTenantID)
         case .deviceCode:
-            return .deviceCodeEnvironment
+            return .deviceCode(tenantID: normalizedTenantID)
         case .azureCLI:
             return .azureCLI(tenantID: normalizedTenantID)
         case .azurePowerShell:

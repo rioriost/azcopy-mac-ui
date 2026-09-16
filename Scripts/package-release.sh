@@ -1,13 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}/.."
+
+if [[ $# -ne 0 ]]; then
+  echo "Usage: Scripts/package-release.sh" >&2
+  exit 1
+fi
+
+# No credential access, signing, artifact replacement, or notarization before all gates pass.
+"${SCRIPT_DIR}/release-preflight.sh"
+
 VERSION="$(tr -d '[:space:]' < VERSION)"
 APP_NAME="AzCopy Mac UI"
-ARCHIVE_PATH="release/AzCopyMacUI.xcarchive"
-EXPORT_PATH="release/export"
-EXPORT_OPTIONS_PLIST="release/ExportOptions.plist"
+STAGE_PATH="release/${VERSION}"
+ARCHIVE_PATH="${STAGE_PATH}/AzCopyMacUI.xcarchive"
+EXPORT_PATH="${STAGE_PATH}/export"
+EXPORT_OPTIONS_PLIST="${STAGE_PATH}/ExportOptions.plist"
 APP_PATH="${EXPORT_PATH}/${APP_NAME}.app"
-ZIP_PATH="release/azcopy-mac-ui-${VERSION}-macos-arm64.zip"
+ZIP_PATH="${STAGE_PATH}/azcopy-mac-ui-${VERSION}-macos-arm64.zip"
 SHA256_PATH="${ZIP_PATH}.sha256"
 DEVELOPER_ID_APPLICATION="${DEVELOPER_ID_APPLICATION:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
@@ -21,17 +33,31 @@ fi
 
 : "${APPLE_TEAM_ID:?Set APPLE_TEAM_ID or include the team ID in DEVELOPER_ID_APPLICATION}"
 
-rm -rf release
+if [[ ! "${APPLE_TEAM_ID}" =~ ^[A-Z0-9]{10}$ ]]; then
+  echo "APPLE_TEAM_ID must contain exactly 10 uppercase letters or digits" >&2
+  exit 1
+fi
+if [[ -L release || -e "${STAGE_PATH}" || -L "${STAGE_PATH}" ]]; then
+  echo "Refusing an existing release stage or symlink: ${STAGE_PATH}. Move it aside deliberately before retrying." >&2
+  exit 1
+fi
 mkdir -p release
+mkdir "${STAGE_PATH}"
 
-/usr/libexec/PlistBuddy -c 'Clear dict' "${EXPORT_OPTIONS_PLIST}"
-/usr/libexec/PlistBuddy -c 'Add :method string developer-id' "${EXPORT_OPTIONS_PLIST}"
-/usr/libexec/PlistBuddy -c 'Add :destination string export' "${EXPORT_OPTIONS_PLIST}"
-/usr/libexec/PlistBuddy -c 'Add :signingStyle string manual' "${EXPORT_OPTIONS_PLIST}"
-/usr/libexec/PlistBuddy -c "Add :teamID string ${APPLE_TEAM_ID}" "${EXPORT_OPTIONS_PLIST}"
-/usr/libexec/PlistBuddy -c "Add :signingCertificate string ${DEVELOPER_ID_APPLICATION}" "${EXPORT_OPTIONS_PLIST}"
-/usr/libexec/PlistBuddy -c 'Add :stripSwiftSymbols bool true' "${EXPORT_OPTIONS_PLIST}"
-/usr/libexec/PlistBuddy -c 'Add :manageAppVersionAndBuildNumber bool false' "${EXPORT_OPTIONS_PLIST}"
+python3 - "${EXPORT_OPTIONS_PLIST}" "${APPLE_TEAM_ID}" "${DEVELOPER_ID_APPLICATION}" <<'PY'
+import plistlib
+import sys
+with open(sys.argv[1], "xb") as stream:
+    plistlib.dump({
+        "method": "developer-id",
+        "destination": "export",
+        "signingStyle": "manual",
+        "teamID": sys.argv[2],
+        "signingCertificate": sys.argv[3],
+        "stripSwiftSymbols": True,
+        "manageAppVersionAndBuildNumber": False,
+    }, stream)
+PY
 
 xcrun notarytool history --keychain-profile "${NOTARY_PROFILE}" >/dev/null
 
@@ -48,11 +74,15 @@ xcodebuild archive \
   ONLY_ACTIVE_ARCH=NO \
   ARCHS=arm64
 
+python3 -B "${SCRIPT_DIR}/check-release-app.py" \
+  "${ARCHIVE_PATH}/Products/Applications/${APP_NAME}.app" --archive "${ARCHIVE_PATH}"
+
 xcodebuild -exportArchive \
   -archivePath "${ARCHIVE_PATH}" \
   -exportPath "${EXPORT_PATH}" \
   -exportOptionsPlist "${EXPORT_OPTIONS_PLIST}"
 
+python3 -B "${SCRIPT_DIR}/check-release-app.py" "${APP_PATH}"
 codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
 codesign_details="$(codesign --display --verbose=4 "${APP_PATH}" 2>&1)"
 grep -q 'Runtime Version' <<<"${codesign_details}"
@@ -67,7 +97,7 @@ xcrun stapler staple "${APP_PATH}"
 xcrun stapler validate "${APP_PATH}"
 spctl --assess --type execute --verbose=4 "${APP_PATH}"
 
-rm -f "${ZIP_PATH}"
+rm -f -- "${ZIP_PATH}"
 ditto -c -k --keepParent "${APP_PATH}" "${ZIP_PATH}"
 shasum -a 256 "${ZIP_PATH}" > "${SHA256_PATH}"
 

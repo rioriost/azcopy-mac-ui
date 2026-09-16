@@ -34,18 +34,57 @@ struct ContentView: View {
             }
             .navigationTitle("AzCopy")
         } detail: {
-            Group {
-                switch selection ?? .operations {
-                case .operations:
-                    OperationsView()
-                case .settings:
-                    SettingsView()
-                case .logs:
-                    LogsView()
+            VStack(alignment: .leading, spacing: 12) {
+                if !model.settingsNotice.isEmpty {
+                    Text(model.settingsNotice)
+                        .foregroundStyle(.orange)
+                }
+                ExecutionStatusView()
+                Group {
+                    switch selection ?? .operations {
+                    case .operations:
+                        OperationsView()
+                    case .settings:
+                        SettingsView()
+                    case .logs:
+                        LogsView()
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding()
+        }
+    }
+}
+
+private struct ExecutionStatusView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(model.statusMessage)
+                    .font(.headline)
+                    .textSelection(.enabled)
+                Spacer()
+                if model.isRunning {
+                    ProgressView().controlSize(.small)
+                    Button("Cancel", action: model.cancelCommand)
+                        .keyboardShortcut(.cancelAction)
+                }
+            }
+            if model.isRunning {
+                Text(model.activeCommandPreview)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                ScrollView {
+                    Text(String(model.logText.suffix(4000)))
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(height: 100)
+            }
         }
     }
 }
@@ -256,47 +295,11 @@ private extension TransferAction {
         }
     }
 
-    var supportsRecursive: Bool {
-        switch self {
-        case .copy, .sync, .remove, .setProperties:
-            true
-        default:
-            false
-        }
-    }
-
-    var supportsDryRun: Bool {
-        switch self {
-        case .copy, .sync, .remove, .setProperties:
-            true
-        default:
-            false
-        }
-    }
-
-    var supportsCapMbps: Bool {
-        switch self {
-        case .copy, .sync, .bench:
-            true
-        default:
-            false
-        }
-    }
-
-    var supportsIncludeExcludePattern: Bool {
-        switch self {
-        case .copy, .sync, .remove, .setProperties:
-            true
-        default:
-            false
-        }
-    }
-
     var hasStandardOptions: Bool {
         supportsRecursive ||
             supportsDryRun ||
             supportsCapMbps ||
-            supportsIncludeExcludePattern ||
+            supportsPatternFlags ||
             self == .copy ||
             self == .sync
     }
@@ -559,7 +562,7 @@ struct OperationsView: View {
                         TextInputRow(title: "Cap Mbps", prompt: "100", text: $model.capMbps, onChange: model.refreshPreview)
                     }
 
-                    if model.selectedAction.supportsIncludeExcludePattern, model.selectedAction != .setProperties {
+                    if model.selectedAction.supportsPatternFlags, model.selectedAction != .setProperties {
                         TextInputRow(title: "Include pattern", prompt: "*.jpg;*.png", text: $model.includePattern, onChange: model.refreshPreview)
 
                         TextInputRow(title: "Exclude pattern", prompt: "*.tmp;*.log", text: $model.excludePattern, onChange: model.refreshPreview)
@@ -569,7 +572,7 @@ struct OperationsView: View {
 
             FixedLabelRow(title: "Preview") {
                 HStack(alignment: .top, spacing: 8) {
-                    Text(model.commandPreview.isEmpty ? model.statusMessage : model.commandPreview)
+                    Text(model.commandPreview.isEmpty ? model.validationMessage : model.commandPreview)
                         .font(.system(.body, design: .monospaced))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -587,14 +590,7 @@ struct OperationsView: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") {}
-                    .disabled(true)
-                    .keyboardShortcut(.cancelAction)
-                Button("Run") {
-                    Task {
-                        await model.runSelectedCommand()
-                    }
-                }
+                Button("Run", action: model.runSelectedCommand)
                     .buttonStyle(.borderedProminent)
                     .disabled(model.commandPreview.isEmpty || model.isRunning)
                     .keyboardShortcut(.defaultAction)
@@ -607,6 +603,19 @@ struct OperationsView: View {
         .navigationTitle("Operations")
         .onAppear {
             category = model.selectedAction.category
+        }
+        .alert("Confirm destructive operation", isPresented: Binding(
+            get: { model.pendingCommand != nil },
+            set: { if !$0 { model.pendingCommand = nil } }
+        ), presenting: model.pendingCommand) { command in
+            Button("Run", role: .destructive) {
+                model.confirmPendingCommand(command)
+            }
+            Button("Cancel", role: .cancel) {
+                model.pendingCommand = nil
+            }
+        } message: { command in
+            Text("This operation can permanently delete data. Confirm the exact command below. Changes to the form will not change this command.\n\n\(command.preview)")
         }
     }
 
@@ -639,6 +648,7 @@ struct AuthenticationSettingsSection: View {
                 Picker("", selection: $model.selectedAuthentication) {
                     ForEach(AuthenticationOption.allCases) { option in
                         Text(option.title).tag(option)
+                            .disabled(option == .managedIdentityObjectID)
                     }
                 }
                 .labelsHidden()
@@ -669,6 +679,7 @@ struct AuthenticationSettingsSection: View {
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
+                    .disabled(model.isLoadingTenants)
                     .help("Load tenants from Azure CLI")
                 }
             }
@@ -677,6 +688,9 @@ struct AuthenticationSettingsSection: View {
                 FixedLabelRow(title: nil) {
                     Text(model.tenantLoadMessage)
                         .foregroundStyle(.secondary)
+                    if model.isLoadingTenants {
+                        Button("Cancel lookup", action: model.cancelTenantLookup)
+                    }
                 }
             }
 
@@ -727,8 +741,24 @@ struct AuthenticationSettingsSection: View {
                 )
             }
 
+            if model.selectedAuthentication == .managedIdentityObjectID {
+                FixedLabelRow(title: nil) {
+                    Text("Object ID is no longer supported. Select client ID or resource ID and enter the corresponding identifier.")
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            if model.selectedAuthentication.supportsSignIn {
+                FixedLabelRow(title: nil) {
+                    Button("Sign In", action: model.signIn)
+                        .disabled(model.isRunning)
+                    Text("Follow the authentication instructions shown above.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             FixedLabelRow(title: nil) {
-                Text("Secrets are passed only to the current AzCopy process environment and are redacted from previews and logs.")
+                Text("Credentials are used only for the current process and are redacted from previews and logs. URL credentials and additional flags are not saved.")
                     .foregroundStyle(.secondary)
             }
         }
@@ -784,6 +814,10 @@ struct SettingsView: View {
                         text: $model.extraFlagsText,
                         onChange: model.refreshPreview
                     )
+                    FixedLabelRow(title: nil) {
+                        Text("Quote values containing spaces. Additional flags are not saved and cannot override options managed by the form.")
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .frame(width: FormLayout.formWidth, alignment: .leading)

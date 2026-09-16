@@ -62,17 +62,17 @@ struct AzCopyCommandBuilderTests {
                 source: "/tmp/source",
                 destination: "https://example.blob.core.windows.net/container",
                 deleteDestination: true,
-                extraFlags: ["--cap-mbps=10"]
+                capMbps: "10"
             ),
             azCopyURL: executable
         )
-        #expect(sync.arguments == ["sync", "/tmp/source", "https://example.blob.core.windows.net/container", "--delete-destination=true", "--cap-mbps=10"])
+        #expect(sync.arguments == ["sync", "/tmp/source", "https://example.blob.core.windows.net/container", "--recursive=false", "--delete-destination=true", "--cap-mbps=10"])
 
         let list = try builder.build(request: TransferRequest(action: .list, source: "https://example.blob.core.windows.net/container"), azCopyURL: executable)
         #expect(list.arguments == ["list", "https://example.blob.core.windows.net/container"])
 
         let remove = try builder.build(request: TransferRequest(action: .remove, source: "https://example.blob.core.windows.net/container/blob"), azCopyURL: executable)
-        #expect(remove.arguments == ["remove", "https://example.blob.core.windows.net/container/blob"])
+        #expect(remove.arguments == ["remove", "https://example.blob.core.windows.net/container/blob", "--recursive=false"])
 
         let jobs = try builder.build(request: TransferRequest(action: .jobsList), azCopyURL: executable)
         #expect(jobs.arguments == ["jobs", "list"])
@@ -90,14 +90,14 @@ struct AzCopyCommandBuilderTests {
             request: TransferRequest(
                 action: .bench,
                 source: "https://example.blob.core.windows.net/container",
-                extraFlags: ["--cap-mbps=500"],
                 benchMode: "download",
                 benchFileCount: "500",
                 benchSizePerFile: "8M",
                 benchNumberOfFolders: "4",
                 benchDeleteTestData: false,
                 benchPutMD5: true,
-                benchCheckLength: false
+                benchCheckLength: false,
+                capMbps: "500"
             ),
             azCopyURL: executable
         )
@@ -207,9 +207,12 @@ struct AzCopyCommandBuilderTests {
         let login = try builder.buildLogin(method: .userIdentity(tenantID: "tenant"), azCopyURL: executable)
         #expect(login.arguments == ["login", "--tenant-id=tenant"])
 
-        let environmentOnly = try builder.buildLogin(method: .azureCLI(tenantID: "tenant"), azCopyURL: executable)
-        #expect(environmentOnly.arguments.isEmpty)
-        #expect(environmentOnly.environment["AZCOPY_AUTO_LOGIN_TYPE"] == "AZCLI")
+        let deviceCode = try builder.buildLogin(method: .deviceCodeEnvironment, azCopyURL: executable)
+        #expect(deviceCode.arguments == ["login"])
+
+        let tenantDeviceCode = try builder.buildLogin(method: .deviceCode(tenantID: " tenant "), azCopyURL: executable)
+        #expect(tenantDeviceCode.arguments == ["login", "--tenant-id=tenant"])
+        #expect(tenantDeviceCode.environment == ["AZCOPY_AUTO_LOGIN_TYPE": "DEVICE", "AZCOPY_TENANT_ID": "tenant"])
     }
 
     @Test("redacted preview hides SAS signature")
@@ -227,5 +230,249 @@ struct AzCopyCommandBuilderTests {
         #expect(AzCopyCommandBuilder.BuilderError.missingSource.errorDescription?.isEmpty == false)
         #expect(AzCopyCommandBuilder.BuilderError.missingDestination.errorDescription?.isEmpty == false)
         #expect(AzCopyCommandBuilder.BuilderError.unsupportedAccountKeyDirectAuth.errorDescription?.isEmpty == false)
+    }
+
+    @Test("recursive is explicit for both settings on every supported action",
+          arguments: [TransferAction.copy, .sync, .remove, .setProperties], [false, true])
+    func recursiveIsExplicit(action: TransferAction, recursive: Bool) throws {
+        let invocation = try builder.build(
+            request: TransferRequest(
+                action: action,
+                source: "/test-data/source",
+                destination: "https://example.blob.core.windows.net/container",
+                recursive: recursive,
+                deleteDestination: action == .sync ? true : nil
+            ),
+            azCopyURL: executable
+        )
+        #expect(invocation.arguments.filter { $0.hasPrefix("--recursive") } == ["--recursive=\(recursive)"])
+        if action == .sync {
+            #expect(invocation.arguments.contains("--delete-destination=true"))
+        }
+    }
+
+    @Test("UI safety flag overrides are rejected in equals and separate forms",
+          arguments: [TransferAction.copy, .sync, .remove, .setProperties])
+    func rejectsSafetyOverrides(action: TransferAction) {
+        for flag in ["--dry-run", "--recursive", "--overwrite", "--delete-destination"] {
+            for flags in [[flag + "=false"], [flag, "false"], [flag], [flag.uppercased() + "=true"]] {
+                let request = TransferRequest(
+                    action: action,
+                    source: "/test-data/source",
+                    destination: "https://example.blob.core.windows.net/container",
+                    recursive: false,
+                    dryRun: true,
+                    extraFlags: flags
+                )
+                #expect(throws: AzCopyCommandBuilder.BuilderError.reservedExtraFlag(flag)) {
+                    _ = try builder.build(request: request, azCopyURL: executable)
+                }
+            }
+        }
+    }
+
+    @Test("operation-specific form options cannot be overridden through extra flags")
+    func rejectsFormOptionOverrides() {
+        let cases: [(TransferAction, String)] = [
+            (.bench, "--delete-test-data"), (.make, "--quota-gb"),
+            (.setProperties, "--metadata"), (.env, "--show-sensitive"),
+            (.jobsShow, "--with-status"), (.jobsResume, "--source-sas"),
+            (.copy, "--cap-mbps"), (.sync, "--cap-mbps"), (.bench, "--cap-mbps"),
+            (.copy, "--include-pattern"), (.copy, "--exclude-pattern"),
+            (.setProperties, "--include-pattern"), (.remove, "--exclude-pattern")
+        ]
+        for (action, flag) in cases {
+            for flags in [[flag + "=value"], [flag, "value"]] {
+                #expect(throws: AzCopyCommandBuilder.BuilderError.reservedExtraFlag(flag)) {
+                    _ = try builder.build(
+                        request: TransferRequest(action: action, source: "/test-data/source", extraFlags: flags, jobID: "job-1"),
+                        azCopyURL: executable
+                    )
+                }
+            }
+        }
+    }
+
+    @Test("additional flags cannot terminate parsing of generated protections")
+    func rejectsArgumentTerminator() {
+        for flags in [["--"], ["--", "--recursive=true"], ["--include-path", "--", "--dry-run=false"]] {
+            #expect(throws: AzCopyCommandBuilder.BuilderError.argumentTerminatorDisallowed) {
+                _ = try builder.build(
+                    request: TransferRequest(action: .remove, source: "/test-data/source", dryRun: true, extraFlags: flags),
+                    azCopyURL: executable
+                )
+            }
+        }
+        for source in ["--", "--dry-run=false", "-relative-path"] {
+            #expect(throws: AzCopyCommandBuilder.BuilderError.invalidArgument) {
+                _ = try builder.build(
+                    request: TransferRequest(action: .remove, source: source, dryRun: true),
+                    azCopyURL: executable
+                )
+            }
+        }
+    }
+
+    @Test("valid additional arguments retain their exact boundaries")
+    func preservesAdditionalFlags() throws {
+        let extra = try ExtraFlagsParser.parse(#"--include-path="folder with spaces" --log-level INFO --metadata 'owner=チーム A' --source-sas 'sv=1&sig=FAKE_SECRET' --custom="literal --recursive=false""#)
+        let invocation = try builder.build(
+            request: TransferRequest(
+                action: .copy,
+                source: "/test-data/source",
+                destination: "/test-data/destination",
+                extraFlags: extra
+            ),
+            azCopyURL: executable
+        )
+        #expect(Array(invocation.arguments.suffix(extra.count)) == extra)
+        #expect(try ExtraFlagsParser.parse(invocation.redactedPreview) == CredentialRedactor.redact(arguments: [executable.path] + invocation.arguments))
+        #expect(!invocation.redactedPreview.contains("FAKE_SECRET"))
+    }
+
+    @Test("unused authentication does not block local administration",
+          arguments: [TransferAction.env, .jobsList, .jobsShow, .jobsRemove, .jobsClean, .loginStatus, .logout])
+    func unusedAuthentication(action: TransferAction) throws {
+        for method in [
+            AuthenticationMethod.servicePrincipalSecret(applicationID: "", tenantID: "", clientSecret: ""),
+            .managedIdentityObjectID("legacy"),
+            .accountKeyDerivedSAS
+        ] {
+            let invocation = try builder.build(
+                request: TransferRequest(action: action, authentication: method, jobID: "job-1"),
+                azCopyURL: executable
+            )
+            #expect(invocation.environment.isEmpty)
+        }
+    }
+
+    @Test("transfer and sign-in validate credentials before invocation")
+    func validatesRequiredAuthentication() {
+        let method = AuthenticationMethod.servicePrincipalSecret(applicationID: "app", tenantID: "tenant", clientSecret: "")
+        #expect(throws: AuthenticationMethod.ValidationError.missingRequiredField("Client secret")) {
+            _ = try builder.build(
+                request: TransferRequest(action: .list, source: "https://example.blob.core.windows.net/c", authentication: method),
+                azCopyURL: executable
+            )
+        }
+        #expect(throws: AuthenticationMethod.ValidationError.missingRequiredField("Client secret")) {
+            _ = try builder.buildLogin(method: method, azCopyURL: executable)
+        }
+        #expect(throws: AuthenticationMethod.ValidationError.managedIdentityObjectIDUnsupported) {
+            _ = try builder.buildLogin(method: .managedIdentityObjectID("old-object-id"), azCopyURL: executable)
+        }
+        #expect(throws: AuthenticationMethod.ValidationError.managedIdentityObjectIDUnsupported) {
+            _ = try builder.build(
+                request: TransferRequest(action: .jobsResume, authentication: .managedIdentityObjectID("legacy"), jobID: "job-1"),
+                azCopyURL: executable
+            )
+        }
+    }
+
+    @Test("unsupported sign-in produces guidance instead of an empty command")
+    func unsupportedLogin() {
+        for method in [AuthenticationMethod.azureCLI(tenantID: nil), .azurePowerShell(tenantID: nil), .sas] {
+            #expect(throws: AzCopyCommandBuilder.BuilderError.unsupportedLoginMethod(method.signInGuidance)) {
+                _ = try builder.buildLogin(method: method, azCopyURL: executable)
+            }
+            #expect(!method.signInGuidance.isEmpty)
+        }
+    }
+
+    @Test("shared capabilities match the supported operation controls")
+    func sharedCapabilities() {
+        for action in TransferAction.allCases {
+            let recursive = [TransferAction.copy, .sync, .remove, .setProperties].contains(action)
+            #expect(action.supportsRecursive == recursive)
+            #expect(action.supportsDryRun == recursive)
+            #expect(action.supportsPatternFlags == recursive)
+            #expect(action.supportsCapMbps == [TransferAction.copy, .sync, .bench].contains(action))
+        }
+    }
+
+    @Test("typed rate and pattern controls follow the shared capabilities",
+          arguments: TransferAction.allCases)
+    func typedFormFlags(action: TransferAction) throws {
+        let invocation = try builder.build(
+            request: TransferRequest(
+                action: action,
+                source: "/test-data/source",
+                destination: "/test-data/destination",
+                jobID: "job-1",
+                capMbps: " 100 ",
+                includePattern: " *.txt;report with spaces ",
+                excludePattern: " *.bak "
+            ),
+            azCopyURL: executable
+        )
+        #expect(invocation.arguments.contains("--cap-mbps=100") == action.supportsCapMbps)
+        #expect(invocation.arguments.contains("--include-pattern=*.txt;report with spaces") == action.supportsPatternFlags)
+        #expect(invocation.arguments.contains("--exclude-pattern=*.bak") == action.supportsPatternFlags)
+    }
+
+    @Test("blank typed controls are omitted without permitting extra-flag overrides")
+    func blankTypedFormFlags() throws {
+        let invocation = try builder.build(
+            request: TransferRequest(
+                action: .copy, source: "/test-data/source", destination: "/test-data/destination",
+                capMbps: " ", includePattern: "\t", excludePattern: "\n"
+            ),
+            azCopyURL: executable
+        )
+        #expect(invocation.arguments == ["copy", "/test-data/source", "/test-data/destination", "--recursive=false"])
+    }
+
+    @Test("unsupported action options are not emitted")
+    func unsupportedOptions() throws {
+        let invocation = try builder.build(
+            request: TransferRequest(action: .list, source: "/test-data/source", recursive: true, dryRun: true, overwrite: true, deleteDestination: true),
+            azCopyURL: executable
+        )
+        #expect(invocation.arguments == ["list", "/test-data/source"])
+    }
+
+    @Test("null characters are rejected instead of being truncated by process launch")
+    func rejectsNullArgument() {
+        for flags in [["--log-level=\0INFO"], ["\0--dry-run=false"]] {
+            #expect(throws: AzCopyCommandBuilder.BuilderError.invalidArgument) {
+                _ = try builder.build(request: TransferRequest(action: .env, extraFlags: flags), azCopyURL: executable)
+            }
+        }
+    }
+}
+
+@Suite("ExtraFlagsParser")
+struct ExtraFlagsParserTests {
+    @Test("documented quoting and escaping preserve argv")
+    func tokenization() throws {
+        let cases: [(String, [String])] = [
+            (" \n\t ", []),
+            (#"--include-path="folder with spaces""#, ["--include-path=folder with spaces"]),
+            (#"--name='日本語 フォルダー' --name=plain"#, ["--name=日本語 フォルダー", "--name=plain"]),
+            (#"'single "quote"' "double 'quote'""#, [#"single "quote""#, "double 'quote'"]),
+            (#"'' "" --empty="" a""b"#, ["", "", "--empty=", "ab"]),
+            (#"escaped\ space \"quote\" "\\" '\literal\text'"#, ["escaped space", "\"quote\"", "\\", "\\literal\\text"]),
+            (#"one" two"' three'"#, ["one two three"]),
+            (#"$HOME $(whoami) `id` *.txt ~ > ; |"#, ["$HOME", "$(whoami)", "`id`", "*.txt", "~", ">", ";", "|"]),
+            ("a\nb\tc\r\nd", ["a", "b", "c", "d"])
+        ]
+        for (text, expected) in cases {
+            #expect(try ExtraFlagsParser.parse(text) == expected)
+        }
+    }
+
+    @Test("malformed quoting fails without including sensitive input in errors")
+    func malformedInput() {
+        for text in [#""FAKE_SECRET"#, #"'FAKE_SECRET"#] {
+            #expect(throws: ExtraFlagsParser.ParseError.unterminatedQuote) {
+                try ExtraFlagsParser.parse(text)
+            }
+        }
+        #expect(throws: ExtraFlagsParser.ParseError.trailingEscape) {
+            try ExtraFlagsParser.parse("FAKE_SECRET\\")
+        }
+        #expect(throws: ExtraFlagsParser.ParseError.nullCharacter) {
+            try ExtraFlagsParser.parse("--flag=\0")
+        }
     }
 }

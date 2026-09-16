@@ -16,6 +16,93 @@ public enum TransferAction: String, CaseIterable, Sendable {
     case jobsClean
     case loginStatus
     case logout
+
+    public var supportsRecursive: Bool {
+        switch self {
+        case .copy, .sync, .remove, .setProperties: true
+        default: false
+        }
+    }
+
+    public var supportsDryRun: Bool { supportsRecursive }
+
+    public var supportsCapMbps: Bool {
+        switch self {
+        case .copy, .sync, .bench: true
+        default: false
+        }
+    }
+
+    public var supportsPatternFlags: Bool { supportsRecursive }
+
+    fileprivate var requiresAuthentication: Bool {
+        switch self {
+        case .copy, .sync, .list, .remove, .bench, .make, .setProperties, .jobsResume: true
+        default: false
+        }
+    }
+}
+
+public enum ExtraFlagsParser {
+    public enum ParseError: Error, Equatable, LocalizedError {
+        case unterminatedQuote
+        case trailingEscape
+        case nullCharacter
+
+        public var errorDescription: String? {
+            switch self {
+            case .unterminatedQuote: "Additional flags contain an unclosed quote."
+            case .trailingEscape: "Additional flags end with a backslash without a character to escape."
+            case .nullCharacter: "Additional flags cannot contain a null character."
+            }
+        }
+    }
+
+    /// Splits on whitespace outside quotes. Single quotes preserve literal text;
+    /// double quotes preserve whitespace. Outside single quotes, backslash escapes
+    /// the next character. Adjacent quoted/unquoted segments form one argument,
+    /// including empty quoted arguments. No shell expansion or evaluation occurs.
+    public static func parse(_ text: String) throws -> [String] {
+        var arguments: [String] = []
+        var current = ""
+        var quote: Character?
+        var escaped = false
+        var started = false
+
+        for character in text {
+            guard character != "\0" else { throw ParseError.nullCharacter }
+            if escaped {
+                current.append(character)
+                escaped = false
+            } else if character == "\\", quote != "'" {
+                escaped = true
+                started = true
+            } else if let activeQuote = quote {
+                if character == activeQuote {
+                    quote = nil
+                } else {
+                    current.append(character)
+                }
+            } else if character == "'" || character == "\"" {
+                quote = character
+                started = true
+            } else if character.isWhitespace {
+                if started {
+                    arguments.append(current)
+                    current = ""
+                    started = false
+                }
+            } else {
+                current.append(character)
+                started = true
+            }
+        }
+
+        guard !escaped else { throw ParseError.trailingEscape }
+        guard quote == nil else { throw ParseError.unterminatedQuote }
+        if started { arguments.append(current) }
+        return arguments
+    }
 }
 
 public struct TransferRequest: Equatable, Sendable {
@@ -49,6 +136,9 @@ public struct TransferRequest: Equatable, Sendable {
     public var excludePath: String
     public var listOfFiles: String
     public var showSensitiveEnvironment: Bool
+    public var capMbps: String
+    public var includePattern: String
+    public var excludePattern: String
 
     public init(
         action: TransferAction,
@@ -80,7 +170,10 @@ public struct TransferRequest: Equatable, Sendable {
         includePath: String = "",
         excludePath: String = "",
         listOfFiles: String = "",
-        showSensitiveEnvironment: Bool = false
+        showSensitiveEnvironment: Bool = false,
+        capMbps: String = "",
+        includePattern: String = "",
+        excludePattern: String = ""
     ) {
         self.action = action
         self.source = source
@@ -112,6 +205,9 @@ public struct TransferRequest: Equatable, Sendable {
         self.excludePath = excludePath
         self.listOfFiles = listOfFiles
         self.showSensitiveEnvironment = showSensitiveEnvironment
+        self.capMbps = capMbps
+        self.includePattern = includePattern
+        self.excludePattern = excludePattern
     }
 }
 
@@ -127,8 +223,8 @@ public struct AzCopyInvocation: Equatable, Sendable {
     }
 
     public var redactedPreview: String {
-        ([executableURL.path] + arguments)
-            .map(CredentialRedactor.redact)
+        CredentialRedactor.redact(arguments: [executableURL.path] + arguments)
+            .map(CredentialRedactor.quoteArgument)
             .joined(separator: " ")
     }
 }
@@ -138,6 +234,10 @@ public struct AzCopyCommandBuilder: Sendable {
         case missingSource
         case missingDestination
         case unsupportedAccountKeyDirectAuth
+        case reservedExtraFlag(String)
+        case argumentTerminatorDisallowed
+        case invalidArgument
+        case unsupportedLoginMethod(String)
 
         public var errorDescription: String? {
             switch self {
@@ -147,6 +247,14 @@ public struct AzCopyCommandBuilder: Sendable {
                 "A destination path or URL is required."
             case .unsupportedAccountKeyDirectAuth:
                 "AzCopy v10 does not support direct account-key authentication. Use a SAS URL instead."
+            case .reservedExtraFlag(let flag):
+                "\(flag) is managed by the operation form. Remove it from Additional flags and use the corresponding control."
+            case .argumentTerminatorDisallowed:
+                "Additional flags cannot contain -- because it disables parsing of the operation's safety flags."
+            case .invalidArgument:
+                "Paths, job IDs, and additional flags cannot contain null characters; paths and job IDs must not start with a hyphen. Use an absolute path or prefix a local path with ./."
+            case .unsupportedLoginMethod(let guidance):
+                guidance
             }
         }
     }
@@ -154,9 +262,13 @@ public struct AzCopyCommandBuilder: Sendable {
     public init() {}
 
     public func build(request: TransferRequest, azCopyURL: URL) throws -> AzCopyInvocation {
-        if case .accountKeyDerivedSAS = request.authentication {
-            throw BuilderError.unsupportedAccountKeyDirectAuth
+        if request.action.requiresAuthentication {
+            if case .accountKeyDerivedSAS = request.authentication {
+                throw BuilderError.unsupportedAccountKeyDirectAuth
+            }
+            try request.authentication.validate()
         }
+        try validateExtraFlags(request.extraFlags, action: request.action)
 
         var arguments: [String]
         switch request.action {
@@ -232,30 +344,49 @@ public struct AzCopyCommandBuilder: Sendable {
             arguments = ["logout"]
         }
 
-        if request.recursive, supportsRecursive(request.action) {
-            arguments.append("--recursive=true")
+        if request.action.supportsRecursive {
+            arguments.append("--recursive=\(request.recursive)")
         }
-        if request.dryRun, supportsDryRun(request.action) {
+        if request.dryRun, request.action.supportsDryRun {
             arguments.append("--dry-run")
         }
-        if let overwrite = request.overwrite {
+        if request.action == .copy, let overwrite = request.overwrite {
             arguments.append("--overwrite=\(overwrite)")
         }
-        if let deleteDestination = request.deleteDestination {
+        if request.action == .sync, let deleteDestination = request.deleteDestination {
             arguments.append("--delete-destination=\(deleteDestination)")
+        }
+        if request.action.supportsCapMbps {
+            appendFlag("--cap-mbps", value: request.capMbps, to: &arguments)
+        }
+        if request.action.supportsPatternFlags {
+            appendFlag("--include-pattern", value: request.includePattern, to: &arguments)
+            appendFlag("--exclude-pattern", value: request.excludePattern, to: &arguments)
+        }
+        let positionalValues: [String]
+        switch request.action {
+        case .copy, .sync: positionalValues = [request.source, request.destination ?? ""]
+        case .list, .remove, .bench, .make, .setProperties: positionalValues = [request.source]
+        case .jobsShow, .jobsResume, .jobsRemove: positionalValues = [request.jobID]
+        default: positionalValues = []
+        }
+        guard !positionalValues.contains(where: { $0.hasPrefix("-") }),
+              !arguments.contains(where: { $0.contains("\0") }) else {
+            throw BuilderError.invalidArgument
         }
         arguments.append(contentsOf: request.extraFlags)
 
         return AzCopyInvocation(
             executableURL: azCopyURL,
             arguments: arguments,
-            environment: request.authentication.environment
+            environment: request.action.requiresAuthentication ? request.authentication.environment : [:]
         )
     }
 
     public func buildLogin(method: AuthenticationMethod, azCopyURL: URL) throws -> AzCopyInvocation {
+        try method.validate()
         guard let arguments = method.loginArguments else {
-            return AzCopyInvocation(executableURL: azCopyURL, arguments: [], environment: method.environment)
+            throw BuilderError.unsupportedLoginMethod(method.signInGuidance)
         }
         return AzCopyInvocation(executableURL: azCopyURL, arguments: arguments, environment: method.environment)
     }
@@ -273,21 +404,37 @@ public struct AzCopyCommandBuilder: Sendable {
         arguments.append("\(name)=\(trimmedValue)")
     }
 
-    private func supportsRecursive(_ action: TransferAction) -> Bool {
+    private func validateExtraFlags(_ arguments: [String], action: TransferAction) throws {
+        var reservedFlags: Set<String> = ["--dry-run", "--recursive", "--overwrite", "--delete-destination"]
         switch action {
-        case .copy, .sync, .remove, .setProperties:
-            true
+        case .bench:
+            reservedFlags.formUnion(["--mode", "--file-count", "--size-per-file", "--number-of-folders", "--delete-test-data", "--put-md5", "--check-length"])
+        case .make:
+            reservedFlags.insert("--quota-gb")
+        case .setProperties:
+            reservedFlags.formUnion(["--block-blob-tier", "--page-blob-tier", "--rehydrate-priority", "--metadata", "--blob-tags", "--include-path", "--exclude-path", "--list-of-files"])
+        case .env:
+            reservedFlags.insert("--show-sensitive")
+        case .jobsShow:
+            reservedFlags.insert("--with-status")
+        case .jobsResume:
+            reservedFlags.formUnion(["--source-sas", "--destination-sas", "--include", "--exclude"])
         default:
-            false
+            break
         }
-    }
-
-    private func supportsDryRun(_ action: TransferAction) -> Bool {
-        switch action {
-        case .copy, .sync, .remove, .setProperties:
-            true
-        default:
-            false
+        if action.supportsCapMbps {
+            reservedFlags.insert("--cap-mbps")
+        }
+        if action.supportsPatternFlags {
+            reservedFlags.formUnion(["--include-pattern", "--exclude-pattern"])
+        }
+        for argument in arguments {
+            guard !argument.contains("\0") else { throw BuilderError.invalidArgument }
+            guard argument != "--" else { throw BuilderError.argumentTerminatorDisallowed }
+            let name = String(argument.prefix { $0 != "=" }).lowercased()
+            if reservedFlags.contains(name) {
+                throw BuilderError.reservedExtraFlag(name)
+            }
         }
     }
 }

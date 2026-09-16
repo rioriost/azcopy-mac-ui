@@ -14,10 +14,12 @@ jobs:
         run: |
           swift --version
           xcodebuild -version
-      - name: Test with coverage
-        run: swift test --enable-code-coverage
-      - name: Coverage gate
-        run: Scripts/check-coverage.sh
-      - name: Build app
-        run: xcodebuild -project AzCopyMacUI.xcodeproj -scheme AzCopyMacUI -destination 'platform=macOS,arch=arm64' build
-
+      - name: Release preflight (versions, script regressions, security, tests, coverage)
+        run: Scripts/release-preflight.sh
+      - name: Dependency inventory (not a vulnerability audit)
+        run: swift package show-dependencies --format json > dependencies.json
+      - name: Build arm64 app without signing
+        run: >-
+          xcodebuild -project AzCopyMacUI.xcodeproj -scheme AzCopyMacUI
+          -configuration Release -destination 'generic/platform=macOS'
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ARCHS=arm64 build

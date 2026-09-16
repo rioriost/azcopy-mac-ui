@@ -17,7 +17,7 @@ public struct SecurityPolicy: Sendable {
             case .shellExecutableDisallowed:
                 "Shell execution is not allowed."
             case .insecureAzureURL(let value):
-                "Azure URL must use HTTPS: \(value)"
+                "Remote storage URLs must use HTTPS: \(CredentialRedactor.redact(arguments: [value]).joined())"
             case .accountKeyDirectAuthUnsupported:
                 "Direct account-key authentication is not supported by AzCopy v10."
             }
@@ -50,21 +50,34 @@ public struct SecurityPolicy: Sendable {
     }
 
     private func validateURLString(_ value: String) throws {
-        guard let url = URL(string: value),
-              let host = url.host,
-              host.contains(".blob.core.") || host.contains(".file.core.") else {
+        let candidate: String
+        if value.hasPrefix("-"), let separator = value.firstIndex(of: "=") {
+            candidate = String(value[value.index(after: separator)...])
+        } else {
+            candidate = value
+        }
+        guard let url = URLComponents(string: candidate.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let rawHost = url.host,
+              let scheme = url.scheme?.lowercased() else {
+            return
+        }
+        var host = rawHost.lowercased()
+        if host.hasPrefix("["), host.hasSuffix("]") {
+            host = String(host.dropFirst().dropLast())
+        }
+        if host.hasSuffix(".") { host.removeLast() }
+
+        if scheme == "https" {
             return
         }
 
-        if url.scheme == "https" {
+        let isAzureStorage = [".blob.core.", ".file.core.", ".dfs.core."].contains { host.contains($0) }
+        guard scheme == "http" || isAzureStorage else { return }
+
+        if scheme == "http", allowInsecureLocalhost, ["localhost", "127.0.0.1", "::1"].contains(host) {
             return
         }
 
-        if allowInsecureLocalhost, ["localhost", "127.0.0.1", "::1"].contains(host) {
-            return
-        }
-
-        throw Violation.insecureAzureURL(value)
+        throw Violation.insecureAzureURL(CredentialRedactor.redact(arguments: [candidate]).joined())
     }
 }
-

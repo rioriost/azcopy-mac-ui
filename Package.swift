@@ -15,6 +15,16 @@ let package = Package(
         .testTarget(
             name: "AzCopyMacUICoreTests",
             dependencies: ["AzCopyMacUICore"]
+        ),
+        .target(
+            name: "AzCopyMacUIModel",
+            dependencies: ["AzCopyMacUICore"],
+            path: "Sources/AzCopyMacUI",
+            exclude: ["AzCopyMacUIApp.swift", "ContentView.swift"]
+        ),
+        .testTarget(
+            name: "AzCopyMacUIModelTests",
+            dependencies: ["AzCopyMacUIModel", "AzCopyMacUICore"]
         )
     ],
     swiftLanguageModes: [.v6]

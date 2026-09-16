@@ -1,5 +1,14 @@
 # azcopy-mac-ui implementation plan
 
+This is the historical initial implementation plan. The 0.2.1 corrections and
+intentional behavior changes are recorded in
+[`design-code-review-2026-09-16.md`](design-code-review-2026-09-16.md) and
+[`releases/0.2.1.md`](releases/0.2.1.md).
+Current distribution uses a local signing/notarization script with mandatory
+preflight gates rather than a GitHub Actions release workflow. Managed identity
+Object ID is retained only for migration/error reporting, not as a supported
+authentication choice.
+
 ## Goal
 
 Build `azcopy-mac-ui` as a native macOS GUI for [AzCopy](https://github.com/Azure/azure-storage-azcopy). The app wraps the Homebrew-installed `azcopy` CLI, exposes safe transfer/authentication workflows, and is prepared for notarized Homebrew distribution.

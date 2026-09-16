@@ -25,7 +25,8 @@ if {
   fail "possible secret logging found"
 fi
 
-if grep -R --line-number -E 'AZCOPY_ACCOUNT_KEY' Sources Tests | grep -Ev 'CredentialRedactor.swift|SecurityPolicy.swift|SecurityPolicyTests.swift'; then
+if grep -R --line-number --include='*.swift' -F 'AZCOPY_ACCOUNT_KEY' Sources Tests |
+   grep -Ev '^Sources/AzCopyMacUICore/(CredentialRedactor|SecurityPolicy|AzCopyProcessRunner)\.swift:|^Tests/AzCopyMacUICoreTests/(CredentialRedactor|SecurityPolicy|AzCopyProcessRunner)Tests\.swift:'; then
   fail "direct account key authentication found"
 fi
 
