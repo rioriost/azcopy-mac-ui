@@ -86,6 +86,54 @@ class ReleaseTests(ScriptFixture):
         self.assertEqual(sentinel.read_text(), "user artifact")
         self.assert_not_signed()
 
+    def test_invalid_credentials_do_not_create_stage(self):
+        self.state["notary_failure"] = "No Keychain password item found for profile"
+        self.write_state()
+        self.assert_failed(self.run_script("package-release.sh"), "could not read the selected profile")
+        self.assertFalse((self.root / "release").exists())
+
+    def test_configured_checkout_packages_without_environment_exports(self):
+        result = self.run_script("release-config.py", "configure")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in ("DEVELOPER_ID_APPLICATION", "APPLE_TEAM_ID", "NOTARY_PROFILE"):
+            self.env.pop(name)
+        result = self.run_script("package-release.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.root / "release/0.2.1/azcopy-mac-ui-0.2.1-macos-arm64.zip").is_file())
+
+    def test_custom_notary_keychain_reaches_validation_and_submission(self):
+        keychain = self.write("credentials/notary keychain-db", "fixture")
+        self.env["NOTARY_KEYCHAIN"] = str(keychain)
+        result = self.run_script("package-release.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for call in self.commands():
+            if call[:2] == ["xcrun", "notarytool"]:
+                self.assertEqual(call[call.index("--keychain") + 1], str(keychain))
+
+    def test_retry_preserves_existing_stage_and_releases_lock(self):
+        self.write("release/0.2.1/keep.zip", "user artifact")
+        result = self.run_script("package-release.sh", "--retry")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        backups = list((self.root / "release").glob(".retry-0.2.1.*/artifacts/keep.zip"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_text(), "user artifact")
+        self.assertFalse((self.root / "release/.0.2.1.lock").exists())
+
+    def test_failed_retry_credentials_leave_existing_stage_untouched(self):
+        sentinel = self.write("release/0.2.1/keep.zip", "user artifact")
+        self.state["notary_failure"] = "HTTP status code 401 Unauthorized"
+        self.write_state()
+        self.assert_failed(self.run_script("package-release.sh", "--retry"), "Apple rejected")
+        self.assertEqual(sentinel.read_text(), "user artifact")
+        self.assertEqual(list((self.root / "release").glob(".retry-*")), [])
+
+    def test_existing_release_lock_prevents_build_and_stage_changes(self):
+        self.write("release/.0.2.1.lock/sentinel", "active release")
+        result = self.run_script("package-release.sh")
+        self.assert_failed(result, "Another release may be running")
+        self.assertFalse(any(c[0] in ("codesign", "xcodebuild") for c in self.commands()))
+        self.assertFalse((self.root / "release/0.2.1").exists())
+
     def test_release_root_symlink_is_rejected(self):
         target = self.root / "user-artifacts"
         target.mkdir()
@@ -116,7 +164,9 @@ class ReleaseTests(ScriptFixture):
         self.assertEqual(notary[notary.index("--keychain-profile") + 1], self.env["NOTARY_PROFILE"])
         self.assertTrue(any(c[:3] == ["xcrun", "stapler", "validate"] for c in calls))
         self.assertTrue(any(c[0] == "spctl" for c in calls))
-        self.assertTrue((self.root / "release/0.2.1/azcopy-mac-ui-0.2.1-macos-arm64.zip.sha256").is_file())
+        checksum = self.root / "release/0.2.1/azcopy-mac-ui-0.2.1-macos-arm64.zip.sha256"
+        self.assertTrue(checksum.is_file())
+        self.assertEqual(checksum.read_text().split()[1], "azcopy-mac-ui-0.2.1-macos-arm64.zip")
 
     def test_wrong_architecture_prevents_notarization(self):
         self.state["architectures"] = "arm64 x86_64"

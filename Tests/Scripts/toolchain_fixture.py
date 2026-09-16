@@ -64,6 +64,11 @@ elif command == "xcrun":
         sys.exit(state.get("export_status", 0))
     elif args[:2] == ["lipo", "-archs"]:
         print("x86_64" if args[-1].endswith("/BadFramework") else state.get("architectures", "arm64"))
+    elif args[:2] == ["notarytool", "history"]:
+        if state.get("notary_failure"):
+            print(state["notary_failure"], file=sys.stderr)
+            sys.exit(69)
+        print(json.dumps({"history": []}))
     elif args[0] not in ("notarytool", "stapler"):
         sys.exit("Unexpected xcrun invocation in fixture")
 elif command == "xcodebuild":
@@ -92,5 +97,11 @@ elif command == "codesign":
         print("Runtime Version=26.0.0", file=sys.stderr)
 elif command == "ditto":
     (root / args[-1]).write_bytes(b"offline release zip fixture")
+elif command == "security":
+    if args != ["find-identity", "-v", "-p", "codesigning"]:
+        sys.exit("Fixture refuses secret-reading Keychain commands")
+    default_identity = "Developer ID Application: Fixture 'quoted' \"double\" & <sample> (A1B2C3D4E5)"
+    for index, identity in enumerate(state.get("identities", [default_identity]), 1):
+        print(f'  {index}) {index:040X} "{identity}"')
 elif command != "spctl":
     sys.exit("Unexpected command in fixture")

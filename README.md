@@ -60,24 +60,35 @@ Managed identity Object ID authentication is no longer supported by current AzCo
 
 Release builds are designed for a custom Homebrew tap cask. The release artifact is an arm64 `.app` zip produced from an Xcode archive, signed with Developer ID, notarized, stapled, Gatekeeper-assessed, and checksumed before cask publication.
 
-Local release builds use signing identities and a notary profile stored in your macOS Keychain. Set these values before running the release script:
+Local release builds use signing identities and a notary profile stored in your macOS Keychain.
+Bind this checkout to an **existing** profile once:
 
 ```sh
-export DEVELOPER_ID_APPLICATION="Developer ID Application: Example, Inc. (TEAMID)"
-export APPLE_TEAM_ID="TEAMID"
-export NOTARY_PROFILE="profile-name"
+python3 Scripts/release-config.py configure --notary-profile "existing-profile-name"
 ```
 
-If `APPLE_TEAM_ID` is omitted, the script derives it from the team ID in `DEVELOPER_ID_APPLICATION`.
+A unique valid Developer ID Application identity and its team are selected automatically.
+Use `--signing-identity "Developer ID Application: Example, Inc. (TEAMID)"` if several
+identities are available. For credentials saved in a custom Keychain file, also pass
+`--notary-keychain "/path/to/release.keychain-db"`.
 
-If you need to create a new notary profile, use an app-specific password:
+Only nonsecret references are saved in this checkout's local `.git/config`; passwords
+and private keys remain in Keychain. Subsequent releases require no environment exports.
+`DEVELOPER_ID_APPLICATION`, `APPLE_TEAM_ID`, `NOTARY_PROFILE`, and `NOTARY_KEYCHAIN`
+remain available as explicit overrides for automation.
+
+Inspect or validate the existing binding without building:
 
 ```sh
-xcrun notarytool store-credentials "$NOTARY_PROFILE" \
-  --apple-id "apple-id@example.com" \
-  --team-id "TEAMID" \
-  --password "app-specific-password"
+python3 Scripts/release-config.py show
+python3 Scripts/release-config.py check
 ```
+
+An unset profile reference does **not** mean that credentials are missing from Keychain.
+`notarytool` has no profile-list command, and protected/iCloud profiles may not be visible
+to `security dump-keychain`. Use the original `store-credentials` profile name; do not
+recreate credentials merely because an environment variable is unset.
+See [Scripts/README.md](Scripts/README.md) for configuration and recovery details.
 
 Build the release artifact:
 
@@ -86,7 +97,9 @@ Scripts/package-release.sh
 ```
 
 Packaging reruns all preflight gates before accessing credentials or creating artifacts.
-It refuses an existing `release/<version>/` directory rather than deleting earlier builds.
+Credentials are validated before creating a release stage. An existing
+`release/<version>/` is refused by default; `Scripts/package-release.sh --retry`
+preserves it in a uniquely named backup before starting a new attempt.
 After the script finishes, publish `release/<version>/azcopy-mac-ui-<version>-macos-arm64.zip`
 and its `.sha256` file, then update the cask version and checksum.
 

@@ -15,6 +15,7 @@ class ScriptFixture(unittest.TestCase):
         self.root = ROOT / "coverage/script-regressions" / uuid.uuid4().hex
         self.root.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.root)
+        subprocess.run(["git", "init", "--quiet", str(self.root)], check=True, capture_output=True)
         shutil.copytree(ROOT / "Scripts", self.root / "Scripts", ignore=shutil.ignore_patterns("__pycache__"))
         self.bin = self.root / ".build/out/Products/Debug"
         self.bin.mkdir(parents=True)
@@ -46,7 +47,7 @@ class ScriptFixture(unittest.TestCase):
                    "  self.assertFalse(json.loads((root / 'fixture.json').read_text()).get('script_test_failure'))\n")
         tools = self.root / "fixture-bin"
         tools.mkdir()
-        for name in ("swift", "xcrun", "xcodebuild", "codesign", "ditto", "spctl"):
+        for name in ("swift", "xcrun", "xcodebuild", "codesign", "ditto", "spctl", "security"):
             path = tools / name
             shutil.copyfile(ROOT / "Tests/Scripts/toolchain_fixture.py", path)
             path.chmod(0o755)
@@ -61,6 +62,7 @@ class ScriptFixture(unittest.TestCase):
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         self.env.pop("SWIFTPM_BUILD_SYSTEM", None)
+        self.env.pop("NOTARY_KEYCHAIN", None)
         self.artifacts()
         self.coverage()
 
