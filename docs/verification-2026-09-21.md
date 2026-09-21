@@ -121,3 +121,14 @@ This is a bounded HIG-aligned implementation review, not a claim of complete HIG
 or accessibility compliance. The verified runtime and emulator coverage must not
 be generalized to older macOS versions, actual cloud credentials, or services that
 were not exercised.
+
+
+## Release follow-up: 0.2.2 (build 4)
+
+After the GUI/compatibility review above, the release preflight was rerun and
+passed. The signed arm64 archive and export passed version and architecture checks.
+Apple notarization submission `8c216a56-f090-4cb9-b2ed-94e5c6780b66` was Accepted;
+stapling, stapler validation and Gatekeeper assessment also passed. See
+[`releases/0.2.2.md`](releases/0.2.2.md) for the artifact checksum. These distribution
+checks supersede only the earlier NOT RUN distribution row; other runtime and
+cloud-service coverage limits remain unchanged.
