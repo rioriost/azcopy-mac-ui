@@ -163,3 +163,41 @@ an unsigned arm64 Release app build (there is no redundant security workflow run
 Script tests use offline fake signing/notary commands and project-local fixture
 directories; they never exercise credentials. Actual signing/notarization and deployment
 remain local release steps and are not claimed by the offline regression suite.
+
+## Installed AzCopy compatibility
+
+The optional integration suite runs the app's real command builder and process runner
+against a selected AzCopy binary. It is skipped by normal offline tests unless
+`AZCOPY_TEST_EXECUTABLE` is set.
+
+Check all 15 operation command surfaces, eight supported sign-in argument variants,
+version reporting, environment output, and isolated job history without signing in:
+
+```sh
+AZCOPY_TEST_EXECUTABLE=/opt/homebrew/bin/azcopy swift test --filter AzCopyCompatibilityTests
+```
+
+For actual SAS Blob transfers, install the optional emulator tools outside the app's
+dependencies and run the disposable fixture:
+
+```sh
+npm install --prefix .build/compatibility-tools --no-audit --no-fund azurite@3.37.0 @azure/storage-blob@12.33.0
+node Scripts/test-azcopy-compatibility.mjs /opt/homebrew/bin/azcopy
+```
+
+The script starts Azurite on a random loopback port with a random test account key,
+creates a temporary container, runs the Swift integration tests, and stops/removes
+its own emulator and data. The suite verifies upload/download byte equality,
+recursive transfer and filtering, listing, sync, metadata via the service response,
+job listing/show/removal, and non-mutating copy/sync/remove dry runs followed by
+actual changes. No real Azure account or credentials are used. AzCopy's home,
+logs, and job plans are isolated in temporary directories.
+
+Loopback tests explicitly allow HTTP in the **test runner only** and supply AzCopy's
+`--from-to` / `--location` flags because emulator URLs do not identify the service
+by hostname. The app continues to require HTTPS. `make` is CLI-parsing coverage
+only: AzCopy 10.32.8 rejects the emulator's account-prefixed resource URL. Login,
+resume, benchmark, Azure Files, ADLS, and real Azure authorization are not qualified
+by these local Blob tests. Help parsing verifies flag recognition, not service-side
+validation or successful authentication. Pass another absolute executable path to
+repeat the same checks after an AzCopy upgrade.

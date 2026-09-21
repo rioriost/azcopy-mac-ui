@@ -33,13 +33,17 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("AzCopy")
+            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 260)
         } detail: {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 0) {
                 if !model.settingsNotice.isEmpty {
-                    Text(model.settingsNotice)
-                        .foregroundStyle(.orange)
+                    Label(model.settingsNotice, systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .padding()
                 }
                 ExecutionStatusView()
+                    .padding()
+                Divider()
                 Group {
                     switch selection ?? .operations {
                     case .operations:
@@ -52,23 +56,36 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding()
         }
     }
 }
 
-private struct ExecutionStatusView: View {
+struct ExecutionStatusView: View {
     @EnvironmentObject private var model: AppModel
+
+    private var statusSymbol: String {
+        switch model.executionState {
+        case .idle: "circle.dotted"
+        case .running: "arrow.triangle.2.circlepath"
+        case .succeeded: "checkmark.circle"
+        case .failed: "exclamationmark.triangle"
+        case .cancelled: "stop.circle"
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(model.statusMessage)
+                Label(model.statusMessage, systemImage: statusSymbol)
                     .font(.headline)
                     .textSelection(.enabled)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(model.statusMessage)
+                    .accessibilityAddTraits(.isStaticText)
                 Spacer()
                 if model.isRunning {
                     ProgressView().controlSize(.small)
+                        .accessibilityLabel("AzCopy is running")
                     Button("Cancel", action: model.cancelCommand)
                         .keyboardShortcut(.cancelAction)
                 }
@@ -89,52 +106,43 @@ private struct ExecutionStatusView: View {
     }
 }
 
-private extension View {
-    func topAlignedForm() -> some View {
-        frame(maxWidth: FormLayout.formWidth, maxHeight: .infinity, alignment: .topLeading)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-}
-
-private enum FormLayout {
-    static let formWidth: CGFloat = 760
-    static let labelWidth: CGFloat = 158
-    static let labelTextIndent: CGFloat = 8
-    static let rowSpacing: CGFloat = 8
-    static let sectionCardPadding: CGFloat = 10
-}
-
-private struct FixedLabelRow<Content: View>: View {
+// Let the native form allocate space and wrap labels as the window changes size.
+private struct FormRow<Content: View>: View {
     let title: String?
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         if let title, !title.isEmpty {
-            HStack(alignment: .firstTextBaseline, spacing: FormLayout.rowSpacing) {
+            LabeledContent {
+                content()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } label: {
                 Text(title)
-                    .lineLimit(1)
-                    .font(title == "Command" ? .headline : .body)
-                    .padding(.leading, title == "Command" ? 0 : FormLayout.labelTextIndent)
-                    .frame(width: FormLayout.labelWidth, alignment: .leading)
-
-                content()
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(width: FormLayout.formWidth, alignment: .leading)
+            .labeledContentStyle(AlignedFormRowStyle())
         } else {
-            HStack(alignment: .firstTextBaseline, spacing: FormLayout.rowSpacing) {
-                Text("")
-                    .frame(width: FormLayout.labelWidth)
-
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 content()
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(width: FormLayout.formWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
 
-private struct FixedSection<Content: View>: View {
+private struct AlignedFormRowStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            configuration.label
+                .frame(width: 170, alignment: .leading)
+            configuration.content
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .multilineTextAlignment(.leading)
+        }
+    }
+}
+
+private struct FormSection<Content: View>: View {
     let title: String
     @ViewBuilder var content: () -> Content
 
@@ -144,25 +152,7 @@ private struct FixedSection<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.headline)
-                .frame(width: FormLayout.labelWidth, alignment: .leading)
-                .frame(width: FormLayout.formWidth, alignment: .leading)
-            VStack(alignment: .leading, spacing: 8) {
-                content()
-            }
-            .padding(FormLayout.sectionCardPadding)
-            .background {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 0.5)
-            }
-            .padding(.horizontal, -FormLayout.sectionCardPadding)
-        }
+        SwiftUI.Section(title, content: content)
     }
 }
 
@@ -174,8 +164,10 @@ private struct TextInputRow: View {
     var onChange: () -> Void
 
     var body: some View {
-        FixedLabelRow(title: title) {
-            TextField("", text: $text, prompt: Text(prompt))
+        FormRow(title: title) {
+            TextField(title, text: $text, prompt: Text(prompt))
+                .labelsHidden()
+                .accessibilityLabel(title)
                 .textFieldStyle(.roundedBorder)
                 .disabled(disabled)
                 .onChange(of: text) { _, _ in onChange() }
@@ -190,8 +182,10 @@ private struct SecureInputRow: View {
     var onChange: () -> Void = {}
 
     var body: some View {
-        FixedLabelRow(title: title) {
-            SecureField("", text: $text, prompt: Text(prompt))
+        FormRow(title: title) {
+            SecureField(title, text: $text, prompt: Text(prompt))
+                .labelsHidden()
+                .accessibilityLabel(title)
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: text) { _, _ in onChange() }
         }
@@ -208,9 +202,11 @@ private struct FileInputRow: View {
     var onChange: () -> Void
 
     var body: some View {
-        FixedLabelRow(title: title) {
+        FormRow(title: title) {
             HStack(spacing: 8) {
-                TextField("", text: $text, prompt: Text(prompt))
+                TextField(title, text: $text, prompt: Text(prompt))
+                .labelsHidden()
+                .accessibilityLabel(title)
                     .textFieldStyle(.roundedBorder)
                     .disabled(disabled)
                     .onChange(of: text) { _, _ in onChange() }
@@ -219,6 +215,7 @@ private struct FileInputRow: View {
                 }
                 .disabled(disabled)
                 .help(buttonHelp)
+                .accessibilityLabel(buttonHelp)
             }
         }
     }
@@ -348,83 +345,85 @@ struct OperationsView: View {
     @State private var category: CommandCategory = .transfer
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-            FixedLabelRow(title: nil) {
-                Picker("", selection: $category) {
-                    ForEach(CommandCategory.allCases) { category in
-                        Text(category.rawValue).tag(category)
+        Form {
+            FormSection("Operation") {
+                FormRow(title: "Category") {
+                    Picker("Category", selection: $category) {
+                        ForEach(CommandCategory.allCases) { category in
+                            Text(category.rawValue).tag(category)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+                .onChange(of: category) { _, newCategory in
+                    let actions = TransferAction.actions(in: newCategory)
+                    if !actions.contains(model.selectedAction), let firstAction = actions.first {
+                        model.selectedAction = firstAction
+                        model.refreshPreview()
                     }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize(horizontal: true, vertical: false)
-            }
-            .onChange(of: category) { _, newCategory in
-                let actions = TransferAction.actions(in: newCategory)
-                if !actions.contains(model.selectedAction), let firstAction = actions.first {
-                    model.selectedAction = firstAction
+
+                FormRow(title: "Command") {
+                    Picker("Command", selection: $model.selectedAction) {
+                        ForEach(TransferAction.actions(in: category), id: \.self) { action in
+                            Text(action.title).tag(action)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+                .onChange(of: model.selectedAction) { _, newAction in
+                    category = newAction.category
                     model.refreshPreview()
                 }
-            }
 
-            FixedLabelRow(title: "Command") {
-                Picker("", selection: $model.selectedAction) {
-                    ForEach(TransferAction.actions(in: category), id: \.self) { action in
-                        Text(action.title).tag(action)
+                if model.selectedAction.needsSource {
+                    if [.copy, .sync].contains(model.selectedAction) {
+                        FileInputRow(
+                            title: model.selectedAction.sourceTitle,
+                            prompt: model.selectedAction.sourcePrompt,
+                            buttonHelp: "Choose local source path",
+                            text: $model.source,
+                            onChoose: {
+                                choosePath(title: "Choose Source", binding: $model.source)
+                            },
+                            onChange: model.refreshPreview
+                        )
+                    } else {
+                        TextInputRow(
+                            title: model.selectedAction.sourceTitle,
+                            prompt: model.selectedAction.sourcePrompt,
+                            text: $model.source,
+                            onChange: model.refreshPreview
+                        )
                     }
                 }
-                .labelsHidden()
-                .fixedSize(horizontal: true, vertical: false)
-            }
-            .onChange(of: model.selectedAction) { _, newAction in
-                category = newAction.category
-                model.refreshPreview()
-            }
 
-            if model.selectedAction.needsSource {
-                if [.copy, .sync].contains(model.selectedAction) {
+                if model.selectedAction.needsDestination {
                     FileInputRow(
-                        title: model.selectedAction.sourceTitle,
-                        prompt: model.selectedAction.sourcePrompt,
-                        buttonHelp: "Choose local source path",
-                        text: $model.source,
+                        title: "Destination path or URL",
+                        prompt: "/Users/you/Downloads or https://account.blob.core.windows.net/container",
+                        buttonHelp: "Choose local destination path",
+                        text: $model.destination,
                         onChoose: {
-                            choosePath(title: "Choose Source", binding: $model.source)
+                            choosePath(title: "Choose Destination", binding: $model.destination)
                         },
                         onChange: model.refreshPreview
                     )
-                } else {
-                    TextInputRow(
-                        title: model.selectedAction.sourceTitle,
-                        prompt: model.selectedAction.sourcePrompt,
-                        text: $model.source,
-                        onChange: model.refreshPreview
-                    )
                 }
-            }
 
-            if model.selectedAction.needsDestination {
-                FileInputRow(
-                    title: "Destination path or URL",
-                    prompt: "/Users/you/Downloads or https://account.blob.core.windows.net/container",
-                    buttonHelp: "Choose local destination path",
-                    text: $model.destination,
-                    onChoose: {
-                        choosePath(title: "Choose Destination", binding: $model.destination)
-                    },
-                    onChange: model.refreshPreview
-                )
-            }
+                if model.selectedAction.needsJobID {
+                    TextInputRow(title: "Job ID", prompt: "00000000-0000-0000-0000-000000000000", text: $model.jobID, onChange: model.refreshPreview)
+                }
 
-            if model.selectedAction.needsJobID {
-                TextInputRow(title: "Job ID", prompt: "00000000-0000-0000-0000-000000000000", text: $model.jobID, onChange: model.refreshPreview)
             }
 
             if model.selectedAction == .bench {
-                FixedSection("Benchmark") {
-                    FixedLabelRow(title: "Mode") {
-                        Picker("", selection: $model.benchMode) {
+                FormSection("Benchmark") {
+                    FormRow(title: "Mode") {
+                        Picker("Mode", selection: $model.benchMode) {
                             Text("Upload").tag("upload")
                             Text("Download").tag("download")
                         }
@@ -436,15 +435,15 @@ struct OperationsView: View {
                     TextInputRow(title: "File count", prompt: "100", text: $model.benchFileCount, onChange: model.refreshPreview)
                     TextInputRow(title: "Size per file", prompt: "250M", text: $model.benchSizePerFile, onChange: model.refreshPreview)
                     TextInputRow(title: "Number of folders", prompt: "5", text: $model.benchNumberOfFolders, onChange: model.refreshPreview)
-                    FixedLabelRow(title: nil) {
+                    FormRow(title: nil) {
                         Toggle("Delete test data", isOn: $model.benchDeleteTestData)
                             .onChange(of: model.benchDeleteTestData) { _, _ in model.refreshPreview() }
                     }
-                    FixedLabelRow(title: nil) {
+                    FormRow(title: nil) {
                         Toggle("Put MD5", isOn: $model.benchPutMD5)
                             .onChange(of: model.benchPutMD5) { _, _ in model.refreshPreview() }
                     }
-                    FixedLabelRow(title: nil) {
+                    FormRow(title: nil) {
                         Toggle("Check length", isOn: $model.benchCheckLength)
                             .onChange(of: model.benchCheckLength) { _, _ in model.refreshPreview() }
                     }
@@ -452,15 +451,15 @@ struct OperationsView: View {
             }
 
             if model.selectedAction == .make {
-                FixedSection("Storage") {
+                FormSection("Storage") {
                     TextInputRow(title: "Quota GB", prompt: "100", text: $model.makeQuotaGB, onChange: model.refreshPreview)
                 }
             }
 
             if model.selectedAction == .setProperties {
-                FixedSection("Properties") {
-                    FixedLabelRow(title: "Block blob tier") {
-                        Picker("", selection: $model.blockBlobTier) {
+                FormSection("Properties") {
+                    FormRow(title: "Block blob tier") {
+                        Picker("Block blob tier", selection: $model.blockBlobTier) {
                             ForEach(["None", "Hot", "Cool", "Cold", "Archive"], id: \.self) { Text($0).tag($0) }
                         }
                         .labelsHidden()
@@ -468,8 +467,8 @@ struct OperationsView: View {
                     }
                     .onChange(of: model.blockBlobTier) { _, _ in model.refreshPreview() }
 
-                    FixedLabelRow(title: "Page blob tier") {
-                        Picker("", selection: $model.pageBlobTier) {
+                    FormRow(title: "Page blob tier") {
+                        Picker("Page blob tier", selection: $model.pageBlobTier) {
                             ForEach(["None", "P4", "P6", "P10", "P15", "P20", "P30", "P40", "P50"], id: \.self) { Text($0).tag($0) }
                         }
                         .labelsHidden()
@@ -477,8 +476,8 @@ struct OperationsView: View {
                     }
                     .onChange(of: model.pageBlobTier) { _, _ in model.refreshPreview() }
 
-                    FixedLabelRow(title: "Rehydrate priority") {
-                        Picker("", selection: $model.rehydratePriority) {
+                    FormRow(title: "Rehydrate priority") {
+                        Picker("Rehydrate priority", selection: $model.rehydratePriority) {
                             ForEach(["Standard", "High"], id: \.self) { Text($0).tag($0) }
                         }
                         .labelsHidden()
@@ -497,9 +496,9 @@ struct OperationsView: View {
             }
 
             if model.selectedAction == .jobsShow {
-                FixedSection("Job filters") {
-                    FixedLabelRow(title: "Transfer status") {
-                        Picker("", selection: $model.jobTransferStatus) {
+                FormSection("Job filters") {
+                    FormRow(title: "Transfer status") {
+                        Picker("Transfer status", selection: $model.jobTransferStatus) {
                             Text("Any").tag("")
                             ForEach(["All", "Started", "Success", "Failed"], id: \.self) { Text($0).tag($0) }
                         }
@@ -511,7 +510,7 @@ struct OperationsView: View {
             }
 
             if model.selectedAction == .jobsResume {
-                FixedSection("Resume filters") {
+                FormSection("Resume filters") {
                     SecureInputRow(title: "Source SAS", prompt: "sv=...&sig=...", text: $model.sourceSAS)
                     SecureInputRow(title: "Destination SAS", prompt: "sv=...&sig=...", text: $model.destinationSAS)
                     TextInputRow(title: "Include failed transfers", prompt: "path1;path2", text: $model.includePath, onChange: model.refreshPreview)
@@ -522,37 +521,37 @@ struct OperationsView: View {
             }
 
             if model.selectedAction == .env {
-                FixedLabelRow(title: nil) {
+                FormRow(title: nil) {
                     Toggle("Show sensitive variables", isOn: $model.showSensitiveEnvironment)
                         .onChange(of: model.showSensitiveEnvironment) { _, _ in model.refreshPreview() }
                 }
             }
 
             if model.selectedAction.hasStandardOptions {
-                FixedSection("Options") {
+                FormSection("Options") {
                     if model.selectedAction.supportsRecursive {
-                        FixedLabelRow(title: nil) {
+                        FormRow(title: nil) {
                             Toggle("Recursive", isOn: $model.recursive)
                                 .onChange(of: model.recursive) { _, _ in model.refreshPreview() }
                         }
                     }
 
                     if model.selectedAction.supportsDryRun {
-                        FixedLabelRow(title: nil) {
+                        FormRow(title: nil) {
                             Toggle("Dry run", isOn: $model.dryRun)
                                 .onChange(of: model.dryRun) { _, _ in model.refreshPreview() }
                         }
                     }
 
                     if model.selectedAction == .copy {
-                        FixedLabelRow(title: nil) {
+                        FormRow(title: nil) {
                             Toggle("Overwrite existing files", isOn: $model.overwriteExisting)
                                 .onChange(of: model.overwriteExisting) { _, _ in model.refreshPreview() }
                         }
                     }
 
                     if model.selectedAction == .sync {
-                        FixedLabelRow(title: nil) {
+                        FormRow(title: nil) {
                             Toggle("Delete destination extras", isOn: $model.deleteDestination)
                                 .onChange(of: model.deleteDestination) { _, _ in model.refreshPreview() }
                         }
@@ -570,37 +569,17 @@ struct OperationsView: View {
                 }
             }
 
-            FixedLabelRow(title: "Preview") {
-                HStack(alignment: .top, spacing: 8) {
-                    Text(model.commandPreview.isEmpty ? model.validationMessage : model.commandPreview)
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Button {
-                        copyPreviewToClipboard()
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                    }
-                    .disabled(model.commandPreview.isEmpty)
-                    .help("Copy preview command")
-                    .accessibilityLabel("Copy preview command")
-                }
-            }
-
-            HStack {
-                Spacer()
-                Button("Run", action: model.runSelectedCommand)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.commandPreview.isEmpty || model.isRunning)
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityLabel("Run AzCopy command")
-            }
-            }
-            .frame(width: FormLayout.formWidth, alignment: .leading)
         }
-        .topAlignedForm()
+        .formStyle(.grouped)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            commandFooter
+        }
         .navigationTitle("Operations")
+        .focusedSceneValue(\.azCopyCommand, AzCopyCommandAction(
+            title: runTitle,
+            isEnabled: !model.commandPreview.isEmpty && !model.isRunning && model.pendingCommand == nil,
+            perform: model.runSelectedCommand
+        ))
         .onAppear {
             category = model.selectedAction.category
         }
@@ -617,6 +596,56 @@ struct OperationsView: View {
         } message: { command in
             Text("This operation can permanently delete data. Confirm the exact command below. Changes to the form will not change this command.\n\n\(command.preview)")
         }
+    }
+
+    private var runTitle: String {
+        model.dryRun && model.selectedAction.supportsDryRun
+            ? "Preview \(model.selectedAction.title)"
+            : model.selectedAction.title
+    }
+
+    private var commandFooter: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Command preview")
+                    .font(.headline)
+                Spacer()
+                Button(action: copyPreviewToClipboard) {
+                    Label("Copy command", systemImage: "doc.on.doc")
+                }
+                .disabled(model.commandPreview.isEmpty)
+                .help("Copy the command with credentials redacted")
+            }
+            if model.commandPreview.isEmpty {
+                Label(model.validationMessage, systemImage: "info.circle")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ScrollView {
+                    Text(model.commandPreview)
+                        .font(.system(.callout, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityLabel("Command preview: \(model.commandPreview)")
+                }
+                .frame(height: 64)
+            }
+            HStack {
+                if model.dryRun && model.selectedAction.supportsDryRun {
+                    Label("Dry run — no files will be changed", systemImage: "eye")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(runTitle, action: model.runSelectedCommand)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.commandPreview.isEmpty || model.isRunning || model.pendingCommand != nil)
+                    .help("Run the selected command (⌘Return)")
+            }
+        }
+        .padding()
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
     }
 
     private func choosePath(title: String, binding: Binding<String>) {
@@ -643,49 +672,50 @@ struct AuthenticationSettingsSection: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        FixedSection("Authentication") {
-            FixedLabelRow(title: "Authentication") {
-                Picker("", selection: $model.selectedAuthentication) {
+        FormSection("Authentication") {
+            FormRow(title: "Authentication") {
+                Picker("Authentication", selection: $model.selectedAuthentication) {
                     ForEach(AuthenticationOption.allCases) { option in
                         Text(option.title).tag(option)
                             .disabled(option == .managedIdentityObjectID)
                     }
                 }
                 .labelsHidden()
-                .fixedSize(horizontal: true, vertical: false)
             }
             .onChange(of: model.selectedAuthentication) { _, _ in model.refreshPreview() }
 
-            FixedLabelRow(title: "Tenant ID") {
+            FormRow(title: "Tenant ID") {
                 HStack(spacing: 8) {
                     if model.tenantOptions.isEmpty {
-                        TextField("", text: $model.tenantID, prompt: Text("72f988bf-86f1-41af-91ab-2d7cd011db47"))
+                        TextField("Tenant ID", text: $model.tenantID, prompt: Text("Enter a tenant ID"))
+                            .labelsHidden()
+                            .accessibilityLabel("Tenant ID")
                             .textFieldStyle(.roundedBorder)
                             .onChange(of: model.tenantID) { _, _ in model.refreshPreview() }
                     } else {
-                        Picker("", selection: $model.tenantID) {
+                        Picker("Tenant ID", selection: $model.tenantID) {
                             Text("None").tag("")
                             ForEach(model.tenantOptions) { tenant in
                                 Text(tenant.title).tag(tenant.id)
                             }
                         }
                         .labelsHidden()
-                        .fixedSize(horizontal: true, vertical: false)
                         .onChange(of: model.tenantID) { _, _ in model.refreshPreview() }
                     }
 
                     Button {
                         model.loadTenants()
                     } label: {
-                        Image(systemName: "arrow.clockwise")
+                        Label("Load tenants", systemImage: "arrow.clockwise")
                     }
                     .disabled(model.isLoadingTenants)
                     .help("Load tenants from Azure CLI")
+                    .accessibilityLabel("Load tenants from Azure CLI")
                 }
             }
 
             if !model.tenantLoadMessage.isEmpty {
-                FixedLabelRow(title: nil) {
+                FormRow(title: nil) {
                     Text(model.tenantLoadMessage)
                         .foregroundStyle(.secondary)
                     if model.isLoadingTenants {
@@ -735,36 +765,31 @@ struct AuthenticationSettingsSection: View {
             if [.managedIdentityClientID, .managedIdentityObjectID, .managedIdentityResourceID].contains(model.selectedAuthentication) {
                 TextInputRow(
                     title: "Managed identity identifier",
-                    prompt: "client ID, object ID, or resource ID",
+                    prompt: "Client ID or resource ID",
                     text: $model.managedIdentityID,
                     onChange: model.refreshPreview
                 )
             }
 
             if model.selectedAuthentication == .managedIdentityObjectID {
-                FixedLabelRow(title: nil) {
+                FormRow(title: nil) {
                     Text("Object ID is no longer supported. Select client ID or resource ID and enter the corresponding identifier.")
                         .foregroundStyle(.orange)
                 }
             }
 
             if model.selectedAuthentication.supportsSignIn {
-                FixedLabelRow(title: nil) {
+                FormRow(title: nil) {
                     Button("Sign In", action: model.signIn)
                         .disabled(model.isRunning)
-                    Text("Follow the authentication instructions shown above.")
+                    Text("Authentication instructions appear in the status area while signing in.")
                         .foregroundStyle(.secondary)
                 }
             }
 
-            FixedLabelRow(title: nil) {
+            FormRow(title: nil) {
                 Text("Credentials are used only for the current process and are redacted from previews and logs. URL credentials and additional flags are not saved.")
                     .foregroundStyle(.secondary)
-            }
-        }
-        .onAppear {
-            if model.tenantOptions.isEmpty {
-                model.loadTenants()
             }
         }
     }
@@ -786,43 +811,40 @@ struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                FixedSection("AzCopy") {
-                    FileInputRow(
-                        title: "AzCopy executable",
-                        prompt: AzCopyLocator.homebrewAppleSiliconPath,
-                        buttonHelp: "Choose AzCopy executable",
-                        text: $model.azCopyPath,
-                        onChoose: {
-                            chooseAzCopyExecutable()
-                        },
-                        onChange: model.refreshPreview
-                    )
-                    FixedLabelRow(title: nil) {
-                        Text("Default Apple Silicon Homebrew path: \(AzCopyLocator.homebrewAppleSiliconPath)")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                AuthenticationSettingsSection()
-
-                FixedSection("Advanced") {
-                    TextInputRow(
-                        title: "Additional flags",
-                        prompt: "--log-level=INFO --output-type=json",
-                        text: $model.extraFlagsText,
-                        onChange: model.refreshPreview
-                    )
-                    FixedLabelRow(title: nil) {
-                        Text("Quote values containing spaces. Additional flags are not saved and cannot override options managed by the form.")
-                            .foregroundStyle(.secondary)
-                    }
+        Form {
+            FormSection("AzCopy") {
+                FileInputRow(
+                    title: "AzCopy executable",
+                    prompt: AzCopyLocator.homebrewAppleSiliconPath,
+                    buttonHelp: "Choose AzCopy executable",
+                    text: $model.azCopyPath,
+                    onChoose: {
+                        chooseAzCopyExecutable()
+                    },
+                    onChange: model.refreshPreview
+                )
+                FormRow(title: nil) {
+                    Text("Default Apple Silicon Homebrew path: \(AzCopyLocator.homebrewAppleSiliconPath)")
+                        .foregroundStyle(.secondary)
                 }
             }
-            .frame(width: FormLayout.formWidth, alignment: .leading)
+
+            AuthenticationSettingsSection()
+
+            FormSection("Advanced") {
+                TextInputRow(
+                    title: "Additional flags",
+                    prompt: "--log-level=INFO --output-type=json",
+                    text: $model.extraFlagsText,
+                    onChange: model.refreshPreview
+                )
+                FormRow(title: nil) {
+                    Text("Quote values containing spaces. Additional flags are not saved and cannot override options managed by the form.")
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
-        .topAlignedForm()
+        .formStyle(.grouped)
         .navigationTitle("Settings")
     }
 
@@ -846,8 +868,7 @@ struct LogsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 if model.logText.isEmpty {
-                    Text("AzCopy output will be streamed here with credentials redacted.")
-                        .foregroundStyle(.secondary)
+                    ContentUnavailableView("No Output Yet", systemImage: "terminal", description: Text("Run an operation or sign in to see AzCopy output here. Credentials are redacted."))
                 } else {
                     Text(model.logText)
                         .font(.system(.body, design: .monospaced))
@@ -858,6 +879,7 @@ struct LogsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding()
         .navigationTitle("Logs")
     }
 }

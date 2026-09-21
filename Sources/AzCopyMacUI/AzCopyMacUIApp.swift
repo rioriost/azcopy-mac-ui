@@ -11,8 +11,21 @@ struct AzCopyMacUIApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(model)
-                .frame(minWidth: 980, minHeight: 640)
+                .frame(minWidth: 860, minHeight: 640)
                 .onAppear { appDelegate.model = model }
+        }
+        .defaultSize(width: 1060, height: 820)
+        .commands { OperationCommands() }
+
+        Settings {
+            VStack(spacing: 0) {
+                ExecutionStatusView()
+                    .padding()
+                Divider()
+                SettingsView()
+            }
+            .environmentObject(model)
+            .frame(width: 720, height: 640)
         }
     }
 }
@@ -38,5 +51,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+}
+
+struct AzCopyCommandAction {
+    let title: String
+    let isEnabled: Bool
+    let perform: () -> Void
+}
+
+private struct AzCopyCommandKey: FocusedValueKey {
+    typealias Value = AzCopyCommandAction
+}
+
+extension FocusedValues {
+    var azCopyCommand: AzCopyCommandAction? {
+        get { self[AzCopyCommandKey.self] }
+        set { self[AzCopyCommandKey.self] = newValue }
+    }
+}
+
+private struct OperationCommands: Commands {
+    @FocusedValue(\.azCopyCommand) private var command
+
+    var body: some Commands {
+        CommandMenu("Operation") {
+            Button(command?.title ?? "Run Selected Command") {
+                command?.perform()
+            }
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(command?.isEnabled != true)
+        }
     }
 }

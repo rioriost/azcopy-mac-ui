@@ -2,11 +2,11 @@
 
 Native macOS GUI for [AzCopy](https://github.com/Azure/azure-storage-azcopy), written in Swift 6.
 
-![Transfer copy demo](images/screenshot.png)
+![Transfer form with dry-run preview](images/screenshot.jpg)
 
 ## Status
 
-Current development version: `0.2.1`.
+Current development version: `0.2.2`.
 
 This app does not bundle AzCopy. Install AzCopy with Homebrew:
 
@@ -22,6 +22,20 @@ The app resolves `/opt/homebrew/bin/azcopy` first on Apple Silicon and treats Ho
 - Apple Silicon / arm64
 - Xcode 26 or newer with Swift 6
 - Homebrew `azcopy`
+
+## Tested AzCopy version
+
+**AzCopy 10.32.8** — verified on 2026-09-21 with macOS 27.0 (26A428), Apple Silicon,
+and Xcode 27.0. This was the [latest stable upstream release](https://github.com/Azure/azure-storage-azcopy/releases/tag/v10.32.8)
+at the time of verification.
+
+- All 15 GUI operation commands and their managed flags, plus eight sign-in argument variants, were accepted by the installed CLI.
+- Actual SAS Blob upload/download, content equality, recursive transfer/filtering, listing, sync, metadata, job inspection/removal, and copy/sync/remove dry runs passed against local Azurite 3.37.0.
+- Real Azure login/authorization, Azure Files, ADLS, benchmarks, job resume, and remote resource creation remain unverified. Flag recognition alone does not establish authentication or service behavior.
+
+See [compatibility test instructions](Scripts/README.md#installed-azcopy-compatibility)
+for reproducing the checks with another AzCopy version, and the
+[verification record](docs/verification-2026-09-21.md) for scope and GUI checks.
 
 ## Installation
 
@@ -48,7 +62,9 @@ for targeted commands and supported coverage layouts.
 
 ## Safe operation and authentication
 
-Use **Sign In** in Settings for Microsoft Entra user login. Authentication instructions and transfer output appear while the command is running. **Cancel** stops the active child process; quitting during a command asks to cancel it before exiting.
+Open Settings from the sidebar or with **⌘,**. Use **Sign In** for Microsoft Entra user login; **Load tenants** explicitly reads the available tenants from Azure CLI. Authentication instructions and transfer output appear while the command is running. **Cancel** stops the active child process; quitting during a command asks to cancel it before exiting.
+
+The operation form adapts to the window width, with the command preview and primary action kept visible below the scrollable options. Run the selected operation from the **Operation** menu or with **⌘Return**. Dry runs use a **Preview** action label.
 
 Recursive and dry-run settings are explicit. Remove, sync with destination deletion, and job deletion require confirmation of the exact command. Editing the form does not change an already running or confirmed command.
 
