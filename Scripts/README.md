@@ -159,7 +159,10 @@ The checksum records the ZIP basename, so it remains verifiable after downloadin
 moving the ZIP and checksum together.
 
 One CI job runs the same preflight once, records the dependency inventory, and verifies
-an unsigned arm64 Release app build (there is no redundant security workflow runner).
+unsigned Debug and Release app builds (there is no redundant security workflow runner).
+Both builds use the project's arm64-only settings without an `ARCHS` override.
+`check-release-app.py` checks each app's version/build and every bundled Mach-O,
+including the core framework, so an Intel or universal binary fails CI.
 Script tests use offline fake signing/notary commands and project-local fixture
 directories; they never exercise credentials. Actual signing/notarization and deployment
 remain local release steps and are not claimed by the offline regression suite.

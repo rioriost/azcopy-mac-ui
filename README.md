@@ -59,8 +59,14 @@ The cask depends on the Homebrew `azcopy` formula and installs `AzCopy Mac UI.ap
 
 ```sh
 Scripts/release-preflight.sh
-xcodebuild -project AzCopyMacUI.xcodeproj -scheme AzCopyMacUI -destination 'platform=macOS,arch=arm64' build
+xcodebuild -project AzCopyMacUI.xcodeproj -scheme AzCopyMacUI -destination 'generic/platform=macOS' build
 ```
+
+The Xcode project and both targets (`AzCopyMacUI` and `AzCopyMacUICore`) use
+`ARCHS = arm64` for Debug and Release. This is the Apple Silicon architecture
+also called AArch64; Intel (`x86_64`) and universal app builds are not supported.
+No command-line architecture override is needed. CI builds both configurations
+without an override and rejects any bundled Mach-O that is not arm64-only.
 
 SwiftPM tests both `AzCopyMacUICore` and the app model. The macOS app is built through the Xcode project so the generated `.app` bundle matches the signing, hardened runtime, notarization, and Homebrew cask requirements.
 The preflight runs the complete Swift and script regressions, core line-coverage gate,
