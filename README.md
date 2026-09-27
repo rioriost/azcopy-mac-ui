@@ -25,13 +25,20 @@ The app resolves `/opt/homebrew/bin/azcopy` first on Apple Silicon and treats Ho
 
 ## Tested AzCopy version
 
-**AzCopy 10.32.8** — verified on 2026-09-21 with macOS 27.0 (26A428), Apple Silicon,
-and Xcode 27.0. This was the [latest stable upstream release](https://github.com/Azure/azure-storage-azcopy/releases/tag/v10.32.8)
-at the time of verification.
+**AzCopy 10.32.8** — reverified on 2026-09-27 with macOS 27.2 beta 2 (26B5091g),
+Apple Silicon, and Xcode 27.0. See the
+[upstream release](https://github.com/Azure/azure-storage-azcopy/releases/tag/v10.32.8).
 
 - All 15 GUI operation commands and their managed flags, plus eight sign-in argument variants, were accepted by the installed CLI.
 - Actual SAS Blob upload/download, content equality, recursive transfer/filtering, listing, sync, metadata, job inspection/removal, and copy/sync/remove dry runs passed against local Azurite 3.37.0.
 - Real Azure login/authorization, Azure Files, ADLS, benchmarks, job resume, and remote resource creation remain unverified. Flag recognition alone does not establish authentication or service behavior.
+
+The macOS 27.2 run also passed the full offline preflight, arm64 Release build,
+and isolated app launch/window/normal-quit checks. The published 0.2.2 artifact
+passed checksum, signature, stapled notarization ticket, Gatekeeper and
+`syspolicy_check distribution` checks on this OS. Interactive GUI and accessibility
+checks remain blocked by UI automation permission; the earlier macOS 27.0 GUI
+results are separate evidence. Fresh signing/notarization was not performed.
 
 See [compatibility test instructions](Scripts/README.md#installed-azcopy-compatibility)
 for reproducing the checks with another AzCopy version, and the

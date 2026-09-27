@@ -132,3 +132,71 @@ stapling, stapler validation and Gatekeeper assessment also passed. See
 [`releases/0.2.2.md`](releases/0.2.2.md) for the artifact checksum. These distribution
 checks supersede only the earlier NOT RUN distribution row; other runtime and
 cloud-service coverage limits remain unchanged.
+
+## macOS 27.2 beta 2 follow-up: 2026-09-27
+
+Baseline: `01b0891`, release 0.2.2 (build 4), with no application source changes.
+The user identified the installed OS as beta 2; `sw_vers` reports macOS 27.2,
+build `26B5091g`. Hardware: MacBook Air, model `Mac15,12`, arm64.
+Toolchain: Xcode 27.0 (`27A266a`), macOS SDK 27.0, Apple Swift 6.4
+(`swiftlang-6.4.0.34.1`). Test tools: AzCopy 10.32.8, Azurite 3.37.0,
+Azure Storage Blob JS SDK 12.33.0, Node.js 26.9.0, Python 3.14.7.
+
+| Check | Result / evidence |
+| --- | --- |
+| `Scripts/release-preflight.sh` | PASS: 101 offline Swift tests (85 Core + 16 AppModel), 66 Python script tests, source-pattern security gate, version consistency; 3 opt-in integration tests skipped here and run separately below |
+| Core line coverage | PASS: 96.06% (1389/1446), required minimum 80%, across both test executables |
+| `node Scripts/test-azcopy-compatibility.mjs /opt/homebrew/bin/azcopy` | PASS: all 3 integration tests, with the actual installed CLI |
+| CLI command surfaces | PASS: all 15 operations, eight sign-in argument variants, unknown-flag rejection, version, environment and isolated job history |
+| Disposable SAS Blob workflow | PASS: upload/download byte equality including Japanese content and spaced paths, recursion/filtering, listing, metadata, sync, job show/removal, copy/sync/remove dry runs and actual changes |
+| Unsigned arm64 Release app build | PASS: standard project/scheme, generic macOS destination, `CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ARCHS=arm64` |
+| `Scripts/check-release-app.py` on the Release app | PASS: version 0.2.2, build 4, arm64-only Mach-O |
+| Isolated GUI launch smoke | PASS: same Release source with only a test bundle identifier override; finished launching, visible 1060 x 820 main window and live process at two samples three seconds apart, normal termination |
+| Interactive GUI, visual layout and accessibility | BLOCKED: System Events still reports UI automation disabled after opening the user-controlled Accessibility settings; window/process checks do not qualify these behaviors |
+| Live Azure authentication prerequisites | BLOCKED: Azure CLI reads an enabled cached default account, but Storage access-token acquisition produced no result for over five minutes and was stopped; cached account metadata is not proof of live authentication |
+| Real Azure authentication/services, Azure Files, ADLS, benchmark, job resume and remote resource creation | NOT RUN; emulator/help-parsing limits above still apply |
+| Published 0.2.2 ZIP and app metadata | PASS: downloaded the documented release asset, matched SHA-256 `612f9f78ba9c5b932c5054744de7cd2e46bf32a46809a83be1284a8e7c32c3df`, verified version/build and arm64-only code |
+| Published app signature and notarization ticket on macOS 27.2 | PASS: `codesign --verify --deep --strict --verbose=2` and `xcrun stapler validate` |
+| Published app Gatekeeper and distribution policy on macOS 27.2 | PASS: `spctl --assess --type execute --verbose=4` reports `accepted`, `source=Notarized Developer ID`; `syspolicy_check distribution` passes all checks |
+| Fresh Developer ID signing and notarization on macOS 27.2 | BLOCKED: zero available valid Developer ID Application identities and no configured notarization-profile reference; verification of the already signed release does not exercise a new signing/submission workflow |
+
+AzCopy was initially absent and was installed through Homebrew. Optional emulator
+dependencies were installed only under ignored `.build/compatibility-tools`.
+The fixture used random loopback storage and test credentials, then removed its own
+emulator/data. GUI testing used bundle identifier
+`local.azcopy-mac-ui.compatibility-20260927`; the test process was stopped normally
+and its preference domain removed. Existing application preferences were not used.
+
+The follow-up used the existing Azure CLI account without printing access tokens.
+`azcopy login status` reports not logged in; Azure PowerShell is installed but
+`Az.Accounts` is absent. The public Microsoft identity discovery endpoint returned
+HTTP 200, but that does not diagnose the stalled CLI token request. An independent,
+read-only management-plane request to count storage accounts also timed out after
+45 seconds; only its test process group was stopped. No account inventory or
+Storage token was obtained, no cloud data operation ran, and no cloud resource was
+created, modified or deleted. Live tests require working authentication and an
+identified disposable account/container before writes.
+
+The Accessibility settings page was opened, but no privacy permission was changed
+programmatically. Interactive tests require authorization for the responsible
+terminal/application. New signing requires an available Developer ID certificate
+with its private key, and notarization requires the exact existing Keychain profile
+reference. The missing reference is not evidence that Keychain credentials are
+absent; no broad Keychain credential inspection or credential recreation was done.
+
+Release build artifacts are under `.build/macos-27.2-compatibility`; the isolated
+GUI build is under `.build/macos-27.2-smoke`. The fresh coverage run is
+`.build/coverage-runs/cff08f810c8a4bcd8803b65571991b9e`. Preflight, build, integration,
+installation, launch-smoke, authentication and published-distribution logs are
+retained as local session artifacts. The verified published artifact is retained
+under `.build/macos-27.2-distribution`; it was not installed in `/Applications`,
+launched, re-signed, re-submitted or published.
+No compiler warnings or errors were found in the captured build/test logs.
+
+No application compatibility failure was observed in the completed checks.
+The stalled Azure CLI authentication prerequisite remains inconclusive, not a
+passing cloud test or an established app/macOS defect. This follow-up supersedes
+the earlier NOT RUN entry for macOS 27.2 only for the checks listed here; it does
+not extend the earlier macOS 27.0 interactive GUI results to the beta runtime or
+claim complete beta-OS, accessibility, cloud-service or fresh release-workflow
+qualification.
